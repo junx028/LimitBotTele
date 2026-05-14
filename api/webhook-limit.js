@@ -5,7 +5,6 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GIST_ID = process.env.GIST_ID;
 const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
 const MAIN_BOT_TOKEN = process.env.BOT_TOKEN;
-const TELEGRAM_API = `https://api.telegram.org/bot${MAIN_BOT_TOKEN}`;
 const MAIN_BOT_USERNAME = process.env.MAIN_BOT_USERNAME || 'LimitsModullarBOT';
 const CREATOR_USERNAME = '@xnecz';
 
@@ -96,10 +95,9 @@ module.exports = async (req, res) => {
         });
     }
     
-    // PERBAIKAN: Ambil botId dari URL query parameter Webhook (e.g. ?botId=BOT123)
+    // Ambil botId dari URL query parameter Webhook (e.g. ?botId=BOT123)
     let targetBotId = req.query?.botId;
     if (!targetBotId && req.url) {
-        // Fallback kalau pakai environment selain Vercel yang req.query-nya undefined
         const match = req.url.match(/botId=([^&]+)/);
         if (match) targetBotId = match[1];
     }
@@ -402,15 +400,10 @@ module.exports = async (req, res) => {
             return res.status(200).json({ status: 'OK' });
         }
         
-        // Handle reply button (dari forward message)
+        // Handle reply button (Edukasi Swipe to Reply)
         if (data.startsWith('reply_')) {
-            const parts = data.replace('reply_', '').split('_');
-            const targetUserId = parts[0];
-            
             await sendMessage(chatId,
-                `💬 <b>Balas Pesan</b>\n\n` +
-                `Kirim balasan ke user ${targetUserId}:\n\n` +
-                `<code>/reply ${targetUserId} PESAN_KAMU</code>`,
+                `💡 <b>Tips:</b> Kamu tidak perlu menekan tombol ini lagi.\n\nCukup <b>Swipe / Reply</b> (Balas) langsung pada pesan dari user, ketik pesanmu, dan kirim. Pesan akan otomatis diteruskan ke user tersebut!`,
                 null,
                 botToken
             );
@@ -463,6 +456,77 @@ module.exports = async (req, res) => {
         const ownerId = bot.ownerId;
         const settings = bot.settings || {};
         const isOwner = (senderId === ownerId);
+
+        // ==========================================
+        // 🚀 FITUR DIRECT REPLY + REACTION BATO 🗿
+        // (SEKARANG BERJALAN 100% DI DALAM BOT LIMIT)
+        // ==========================================
+        if (isOwner && msg.reply_to_message && msg.reply_to_message.text) {
+            const repliedText = msg.reply_to_message.text;
+            
+            // Cek apakah pesan yang dibalas adalah forward pesan dari user
+            if (repliedText.includes('PESAN BARU') && repliedText.includes('🆔 ID:')) {
+                // Ambil target User ID
+                const idMatch = repliedText.match(/🆔 ID:\s*(\d+)/);
+                
+                if (idMatch) {
+                    if (!text) {
+                        await sendMessage(chatId, '⚠️ Saat ini hanya mendukung balasan berupa teks.', null, botToken);
+                        return res.status(200).json({ status: 'OK' });
+                    }
+                    
+                    const targetUserId = idMatch[1];
+                    const payload = { 
+                        chat_id: targetUserId, 
+                        text: `📤 <b>Balasan dari Owner:</b>\n\n${text}`, 
+                        parse_mode: 'HTML' 
+                    };
+                    
+                    try {
+                        // Kirim balasan menggunakan token Bot Limit itu sendiri
+                        const sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const sendData = await sendRes.json();
+                        
+                        if (sendData.ok) {
+                            // 🗿 Beri reaction ke pesan owner
+                            await fetch(`https://api.telegram.org/bot${botToken}/setMessageReaction`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    chat_id: chatId,
+                                    message_id: msg.message_id,
+                                    reaction: [{ type: 'emoji', emoji: '🗿' }]
+                                })
+                            });
+                            
+                            // Update database stats & history
+                            if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
+                            bot.stats.totalMessages++;
+                            bot.stats.totalOutgoing++;
+                            bot.stats.todayMessages++;
+                            
+                            if (!bot.chatLog) bot.chatLog = [];
+                            bot.chatLog.push({
+                                direction: 'out',
+                                from: 'Owner',
+                                userId: targetUserId,
+                                text: text,
+                                timestamp: new Date().toISOString()
+                            });
+                            await saveDB(db);
+                        } else {
+                            await sendMessage(chatId, `❌ Gagal mengirim balasan ke user.\nAlasan API: ${sendData.description}`, null, botToken);
+                        }
+                    } catch (error) {}
+                    
+                    return res.status(200).json({ status: 'OK' });
+                }
+            }
+        }
         
         // Handle /start
         if (text === '/start') {
@@ -514,17 +578,17 @@ module.exports = async (req, res) => {
                 
                 await saveDB(db);
                 
-                // Notify owner
+                // PEMBERITAHUAN USER BARU (Dikirim oleh Bot Limit ke Owner)
                 if (settings.notifyOwner) {
                     try {
-                        await fetch(`${TELEGRAM_API}/sendMessage`, {
+                        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                                 chat_id: ownerId,
-                                text: `🔔 <b>NOTIFIKASI</b>\n\n` +
+                                text: `🔔 <b>NOTIFIKASI USER BARU</b>\n\n` +
                                     `🤖 Bot: @${bot.botUsername}\n` +
-                                    `👤 User baru: @${senderUsername || 'Tanpa Username'}\n` +
+                                    `👤 User: @${senderUsername || 'Tanpa Username'}\n` +
                                     `📝 Nama: ${senderName}\n` +
                                     `🔗 ${senderUsername ? 't.me/' + senderUsername : 'ID: ' + senderId}`,
                                 parse_mode: 'HTML'
@@ -559,7 +623,7 @@ module.exports = async (req, res) => {
             return res.status(200).json({ status: 'OK' });
         }
         
-        // Handle /reply command
+        // Handle /reply command (Manual reply via ID)
         if (text.startsWith('/reply') && isOwner) {
             const parts = text.replace('/reply', '').trim().split(' ');
             const targetUserId = parts[0];
@@ -573,7 +637,6 @@ module.exports = async (req, res) => {
             await sendMessage(targetUserId, `📤 <b>Balasan dari Owner:</b>\n\n${replyText}`, null, botToken);
             await sendMessage(chatId, `✅ Balasan terkirim ke user ${targetUserId}`, null, botToken);
             
-            // Update stats
             if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
             bot.stats.totalMessages++;
             bot.stats.totalOutgoing++;
@@ -592,130 +655,20 @@ module.exports = async (req, res) => {
             return res.status(200).json({ status: 'OK' });
         }
         
-        // Handle /setautoreply command
-        if (text.startsWith('/setautoreply') && isOwner) {
-            const parts = text.replace('/setautoreply', '').trim();
-            const spaceIndex = parts.indexOf(' ');
-            const botIdFromCmd = parts.substring(0, spaceIndex > 0 ? spaceIndex : 0);
-            const message = spaceIndex > 0 ? parts.substring(spaceIndex + 1) : parts;
-            
-            if (!message || message === botIdFromCmd) {
-                await sendMessage(chatId, '❌ Format: /setautoreply BOT_ID PESAN', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            if (!bot.settings) bot.settings = {};
-            bot.settings.autoReplyText = message;
-            bot.settings.autoReply = true;
-            await saveDB(db);
-            
-            await sendMessage(chatId, `✅ Auto reply diupdate!\nPesan: "${message}"`, null, botToken);
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle /addblacklist command
-        if (text.startsWith('/addblacklist') && isOwner) {
-            const parts = text.replace('/addblacklist', '').trim().split(' ');
-            const word = parts.slice(1).join(' ') || parts[0];
-            
-            if (!word) {
-                await sendMessage(chatId, '❌ Format: /addblacklist BOT_ID KATA', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            if (!bot.settings) bot.settings = {};
-            if (!bot.settings.blacklistWords) bot.settings.blacklistWords = [];
-            
-            const cleanWord = word.replace(bot.botId, '').trim();
-            if (cleanWord) {
-                bot.settings.blacklistWords.push(cleanWord.toLowerCase());
-                await saveDB(db);
-                await sendMessage(chatId, `✅ Kata "${cleanWord}" ditambahkan ke blacklist!`, null, botToken);
-            }
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle /removeblacklist command
-        if (text.startsWith('/removeblacklist') && isOwner) {
-            const parts = text.replace('/removeblacklist', '').trim().split(' ');
-            const word = parts.slice(1).join(' ') || parts[0];
-            
-            if (!word) {
-                await sendMessage(chatId, '❌ Format: /removeblacklist BOT_ID KATA', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            if (!bot.settings?.blacklistWords) {
-                await sendMessage(chatId, '❌ Blacklist kosong!', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            const cleanWord = word.replace(bot.botId, '').trim().toLowerCase();
-            bot.settings.blacklistWords = bot.settings.blacklistWords.filter(w => w !== cleanWord);
-            await saveDB(db);
-            await sendMessage(chatId, `✅ Kata "${cleanWord}" dihapus dari blacklist!`, null, botToken);
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle /block command
-        if (text.startsWith('/block') && isOwner) {
-            const parts = text.replace('/block', '').trim().split(' ');
-            const blockUserId = parts[parts.length - 1];
-            
-            if (!blockUserId || blockUserId === bot.botId) {
-                await sendMessage(chatId, '❌ Format: /block BOT_ID USER_ID', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            if (!bot.settings) bot.settings = {};
-            if (!bot.settings.blockedUsers) bot.settings.blockedUsers = {};
-            
-            bot.settings.blockedUsers[blockUserId] = { blockedAt: new Date().toISOString() };
-            await saveDB(db);
-            await sendMessage(chatId, `✅ User ${blockUserId} diblokir!`, null, botToken);
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle /unblock command
-        if (text.startsWith('/unblock') && isOwner) {
-            const parts = text.replace('/unblock', '').trim().split(' ');
-            const unblockUserId = parts[parts.length - 1];
-            
-            if (!unblockUserId || !bot.settings?.blockedUsers) {
-                await sendMessage(chatId, '❌ User tidak ditemukan!', null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            delete bot.settings.blockedUsers[unblockUserId];
-            await saveDB(db);
-            await sendMessage(chatId, `✅ User ${unblockUserId} diunblock!`, null, botToken);
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle incoming message from non-owner
+        // Handle incoming message from non-owner (FORWARD KE OWNER)
         if (!isOwner && text && !text.startsWith('/')) {
-            // Check if paused
-            if (settings.isPaused) {
-                return res.status(200).json({ status: 'OK' });
-            }
+            if (settings.isPaused) return res.status(200).json({ status: 'OK' });
+            if (settings.blockedUsers && settings.blockedUsers[senderId]) return res.status(200).json({ status: 'OK' });
             
-            // Check if blocked
-            if (settings.blockedUsers && settings.blockedUsers[senderId]) {
-                return res.status(200).json({ status: 'OK' });
-            }
-            
-            // Check blacklist
             if (containsBlacklistWord(text, settings.blacklistWords)) {
                 await sendMessage(chatId, '⚠️ Pesan kamu mengandung kata yang diblokir.', null, botToken);
                 return res.status(200).json({ status: 'OK' });
             }
             
-            // Initialize stats
             if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
             if (!bot.stats.uniqueUsers) bot.stats.uniqueUsers = {};
             if (!bot.chatLog) bot.chatLog = [];
             
-            // Update stats
             bot.stats.totalMessages++;
             bot.stats.totalIncoming++;
             bot.stats.todayMessages = (bot.stats.todayMessages || 0) + 1;
@@ -733,7 +686,6 @@ module.exports = async (req, res) => {
                 };
             }
             
-            // Add to chat log
             bot.chatLog.push({
                 direction: 'in',
                 from: senderUsername || senderName,
@@ -743,20 +695,20 @@ module.exports = async (req, res) => {
             });
             
             if (bot.chatLog.length > 50) bot.chatLog = bot.chatLog.slice(-50);
-            
             await saveDB(db);
             
-            // Forward to owner
+            // =====================================
+            // FORWARD PESAN KE OWNER DENGAN TOKEN BOT LIMIT SENDIRI
+            // =====================================
             if (settings.forwardToOwner !== false) {
                 const forwardKeyboard = {
                     inline_keyboard: [
-                        [{ text: '💬 Balas', callback_data: `reply_${senderId}_${bot.botId}` },
+                        [{ text: '💬 Balas (Tips)', callback_data: `reply_${senderId}_${bot.botId}` },
                          { text: '🚫 Blokir', callback_data: `limitblock_${senderId}` }]
                     ]
                 };
                 
                 let forwardText = `📩 <b>PESAN BARU</b>\n\n`;
-                forwardText += `🤖 Bot: @${bot.botUsername}\n`;
                 forwardText += `👤 Dari: @${senderUsername || 'Tanpa Username'}\n`;
                 forwardText += `📝 Nama: ${senderName}\n`;
                 forwardText += `🆔 ID: <code>${senderId}</code>\n`;
@@ -764,7 +716,7 @@ module.exports = async (req, res) => {
                 forwardText += `\n💬 <b>Pesan:</b>\n${text}`;
                 
                 try {
-                    await fetch(`${TELEGRAM_API}/sendMessage`, {
+                    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -777,7 +729,6 @@ module.exports = async (req, res) => {
                 } catch (error) {}
             }
             
-            // Auto reply
             if (settings.autoReply) {
                 await sendMessage(chatId, settings.autoReplyText || 'Maaf, owner sedang offline.', null, botToken);
             }
