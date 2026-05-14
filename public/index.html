@@ -1,389 +1,482 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 Bot Limit System | @LeguminY</title>
-    <meta name="description" content="Bikin bot Telegram sendiri! Orang bisa chat kamu lewat bot. Wajib join @LeguminY. Created by @xnecz">
-    <meta property="og:title" content="🤖 Bot Limit System">
-    <meta property="og:description" content="Bikin bot Telegram kamu sendiri! Chat anonymous ke pemilik bot.">
-    <meta name="theme-color" content="#8a2be2">
-    
-    <style>
-        :root {
-            --bg: #0a0a14;
-            --card: #12122a;
-            --purple: #8a2be2;
-            --pink: #e4405f;
-            --blue: #0088cc;
-            --text: #e0e0e0;
-            --text2: #888;
-        }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>⚡ Veldora Limit System</title>
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
+<style>
+:root{
+    --bg:#050816;
+    --card:#0d1326;
+    --line:rgba(255,255,255,.08);
+    --blue:#38bdf8;
+    --cyan:#00f0ff;
+    --purple:#8b5cf6;
+    --text:#f3f6ff;
+    --text2:#9ca3af;
+}
 
-        .stars {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            z-index: 0;
-        }
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
 
-        .star {
-            position: absolute;
-            background: white;
-            border-radius: 50%;
-            animation: twinkle 2s infinite;
-        }
+body{
+    background:
+    radial-gradient(circle at top right, rgba(0,240,255,.12), transparent 25%),
+    radial-gradient(circle at bottom left, rgba(139,92,246,.18), transparent 30%),
+    var(--bg);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    overflow-x:hidden;
+    min-height:100vh;
+}
 
-        @keyframes twinkle {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 1; }
-        }
+/* animated background */
+.grid{
+    position:fixed;
+    inset:0;
+    background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+    background-size:40px 40px;
+    mask-image:linear-gradient(to bottom, transparent, black 20%, black 80%, transparent);
+    z-index:0;
+}
 
-        .container {
-            max-width: 650px;
-            margin: 0 auto;
-            padding: 20px;
-            position: relative;
-            z-index: 1;
-        }
+.glow{
+    position:fixed;
+    width:500px;
+    height:500px;
+    background:radial-gradient(circle, rgba(0,240,255,.15), transparent 70%);
+    top:-100px;
+    right:-100px;
+    filter:blur(30px);
+    animation:float 6s ease-in-out infinite;
+}
 
-        .header {
-            text-align: center;
-            padding: 40px 0 20px;
-        }
+@keyframes float{
+    0%,100%{transform:translateY(0)}
+    50%{transform:translateY(20px)}
+}
 
-        .logo {
-            width: 90px; height: 90px;
-            background: linear-gradient(135deg, var(--purple), var(--pink));
-            border-radius: 25px;
-            margin: 0 auto 20px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2.5rem;
-            animation: float 3s ease-in-out infinite;
-            box-shadow: 0 15px 40px rgba(138, 43, 226, 0.5);
-        }
+.container{
+    max-width:1150px;
+    margin:auto;
+    padding:30px 20px 80px;
+    position:relative;
+    z-index:2;
+}
 
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
-        }
+/* hero */
 
-        .header h1 {
-            font-size: 2.2rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, var(--purple), var(--pink), #ff6b6b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+.hero{
+    background:linear-gradient(145deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+    border:1px solid var(--line);
+    border-radius:32px;
+    overflow:hidden;
+    position:relative;
+    display:grid;
+    grid-template-columns:1.1fr .9fr;
+    align-items:center;
+    padding:60px;
+    gap:40px;
+    backdrop-filter:blur(12px);
+    box-shadow:0 20px 60px rgba(0,0,0,.45);
+}
 
-        .header .tagline {
-            color: var(--text2);
-            letter-spacing: 2px;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            margin-top: 8px;
-        }
+.hero::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:linear-gradient(135deg, rgba(0,240,255,.08), transparent 30%);
+}
 
-        .card {
-            background: var(--card);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 20px;
-            padding: 24px;
-            margin-bottom: 18px;
-        }
+.badge{
+    display:inline-flex;
+    align-items:center;
+    gap:10px;
+    background:rgba(0,240,255,.08);
+    border:1px solid rgba(0,240,255,.25);
+    padding:10px 18px;
+    border-radius:999px;
+    color:var(--cyan);
+    font-size:.85rem;
+    margin-bottom:20px;
+    font-weight:600;
+}
 
-        .card:hover {
-            border-color: rgba(138, 43, 226, 0.3);
-        }
+.hero h1{
+    font-family:'Orbitron',sans-serif;
+    font-size:4rem;
+    line-height:1;
+    margin-bottom:18px;
+    text-transform:uppercase;
+}
 
-        .card-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+.hero h1 span{
+    background:linear-gradient(135deg,var(--cyan),#8b5cf6);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+}
 
-        .icon {
-            width: 38px; height: 38px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            flex-shrink: 0;
-        }
+.hero p{
+    color:var(--text2);
+    font-size:1.05rem;
+    max-width:550px;
+    margin-bottom:30px;
+}
 
-        .icon-purple { background: rgba(138, 43, 226, 0.2); }
-        .icon-pink { background: rgba(228, 64, 95, 0.2); }
-        .icon-blue { background: rgba(0, 136, 204, 0.2); }
-        .icon-green { background: rgba(40, 167, 69, 0.2); }
+.hero-buttons{
+    display:flex;
+    gap:16px;
+    flex-wrap:wrap;
+}
 
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-        }
+.btn{
+    padding:16px 24px;
+    border-radius:16px;
+    text-decoration:none;
+    font-weight:700;
+    transition:.3s;
+}
 
-        .stat-item {
-            background: rgba(255,255,255,0.03);
-            border-radius: 14px;
-            padding: 16px 10px;
-            text-align: center;
-            border: 1px solid rgba(255,255,255,0.05);
-        }
+.btn-main{
+    background:linear-gradient(135deg,var(--cyan),#009dff);
+    color:#00111a;
+    box-shadow:0 10px 30px rgba(0,240,255,.25);
+}
 
-        .stat-value {
-            font-size: 1.6rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, var(--purple), var(--pink));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+.btn-main:hover{
+    transform:translateY(-3px);
+}
 
-        .stat-label {
-            font-size: 0.7rem;
-            color: var(--text2);
-            margin-top: 4px;
-            text-transform: uppercase;
-        }
+.btn-outline{
+    border:1px solid rgba(255,255,255,.12);
+    color:var(--text);
+    background:rgba(255,255,255,.03);
+}
 
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 16px 20px;
-            border: none;
-            border-radius: 14px;
-            font-size: 1rem;
-            font-weight: 700;
-            cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-            transition: all 0.3s;
-        }
+.hero-image{
+    position:relative;
+}
 
-        .btn:active { transform: scale(0.97); }
+.hero-image img{
+    width:100%;
+    max-width:450px;
+    display:block;
+    margin:auto;
+    filter:drop-shadow(0 0 40px rgba(0,240,255,.2));
+}
 
-        .btn-primary {
-            background: linear-gradient(135deg, var(--blue), #00a8ff);
-            color: white;
-            box-shadow: 0 10px 30px rgba(0, 136, 204, 0.35);
-            font-size: 1.15rem;
-            padding: 18px;
-            margin-bottom: 10px;
-        }
+/* cards */
 
-        .btn-primary:hover {
-            box-shadow: 0 15px 40px rgba(0, 136, 204, 0.5);
-            transform: translateY(-2px);
-        }
+.section{
+    margin-top:30px;
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:20px;
+}
 
-        .btn-channel {
-            background: linear-gradient(135deg, #2b5278, #3a6d99);
-            color: white;
-            margin-top: 10px;
-        }
+.card{
+    background:rgba(255,255,255,.03);
+    border:1px solid var(--line);
+    border-radius:24px;
+    padding:24px;
+    backdrop-filter:blur(10px);
+    position:relative;
+    overflow:hidden;
+}
 
-        .channel-box {
-            background: linear-gradient(135deg, rgba(0,136,204,0.15), rgba(0,136,204,0.05));
-            border: 1px solid rgba(0,136,204,0.3);
-            border-radius: 16px;
-            padding: 20px;
-            text-align: center;
-            margin-bottom: 18px;
-        }
+.card::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:linear-gradient(135deg, rgba(0,240,255,.05), transparent);
+    opacity:0;
+    transition:.3s;
+}
 
-        .channel-box h3 {
-            color: var(--blue);
-            font-size: 1.3rem;
-        }
+.card:hover::before{
+    opacity:1;
+}
 
-        .channel-box .warning {
-            color: #ff6b6b;
-            font-size: 0.8rem;
-            margin-top: 4px;
-        }
+.card h3{
+    font-size:1.2rem;
+    margin-bottom:18px;
+}
 
-        .feature-list {
-            list-style: none;
-        }
+.stats{
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+}
 
-        .feature-list li {
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 0.9rem;
-        }
+.stat{
+    flex:1;
+    text-align:center;
+    background:rgba(255,255,255,.03);
+    padding:18px 10px;
+    border-radius:18px;
+}
 
-        .feature-list li:last-child { border-bottom: none; }
+.stat h2{
+    font-size:2rem;
+    color:var(--cyan);
+    font-family:'Orbitron',sans-serif;
+}
 
-        .check { color: #28a745; font-weight: bold; flex-shrink: 0; }
+.stat p{
+    color:var(--text2);
+    font-size:.8rem;
+    margin-top:6px;
+}
 
-        .footer {
-            text-align: center;
-            padding: 30px 20px;
-            color: #555;
-            font-size: 0.8rem;
-        }
+.feature{
+    display:flex;
+    gap:14px;
+    margin-bottom:18px;
+}
 
-        .divider {
-            width: 60px; height: 2px;
-            background: linear-gradient(90deg, var(--purple), var(--pink));
-            margin: 20px auto;
-            border-radius: 2px;
-        }
+.feature:last-child{
+    margin-bottom:0;
+}
 
-        .footer a { color: var(--purple); text-decoration: none; }
+.feature-icon{
+    min-width:48px;
+    height:48px;
+    border-radius:14px;
+    background:rgba(0,240,255,.08);
+    border:1px solid rgba(0,240,255,.15);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:1.2rem;
+}
 
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(138, 43, 226, 0.3); border-radius: 2px; }
+.feature-text h4{
+    margin-bottom:4px;
+}
 
-        @media (max-width: 480px) {
-            .header h1 { font-size: 1.7rem; }
-            .stats-grid { gap: 6px; }
-            .stat-item { padding: 12px 6px; }
-            .stat-value { font-size: 1.3rem; }
-            .container { padding: 12px; }
-        }
-    </style>
+.feature-text p{
+    color:var(--text2);
+    font-size:.9rem;
+}
+
+/* footer */
+
+.footer{
+    margin-top:50px;
+    text-align:center;
+    color:#687086;
+    font-size:.9rem;
+}
+
+.footer strong{
+    color:var(--cyan);
+}
+
+/* responsive */
+
+@media(max-width:900px){
+
+.hero{
+    grid-template-columns:1fr;
+    text-align:center;
+    padding:40px 24px;
+}
+
+.hero p{
+    margin:auto auto 25px;
+}
+
+.hero-buttons{
+    justify-content:center;
+}
+
+.hero h1{
+    font-size:2.8rem;
+}
+}
+</style>
 </head>
+
 <body>
 
-    <div class="stars" id="stars"></div>
+<div class="grid"></div>
+<div class="glow"></div>
 
-    <div class="container">
+<div class="container">
 
-        <div class="header">
-            <div class="logo">🤖</div>
-            <h1>Bot Limit System</h1>
-            <p class="tagline">Bikin Bot Telegram Sendiri • Chat ke Pemilik Bot</p>
+    <section class="hero">
+
+        <div>
+            <div class="badge">
+                ⚡ Powered by Veldora System
+            </div>
+
+            <h1>
+                BOT <span>LIMIT</span><br>
+                FREE
+            </h1>
+
+            <p>
+                Buat bot Telegram anonymous kamu sendiri dengan tampilan modern,
+                sistem realtime, auto reply, statistik live, dan fitur management lengkap.
+                Karena manusia ternyata suka bikin bot untuk ngobrol sama manusia lain lewat bot. 
+                Evolusi sosial yang sangat membanggakan 🫠
+            </p>
+
+            <div class="hero-buttons">
+                <a href="https://t.me/LimitsModullarBOT" class="btn btn-main">
+                    🚀 START BOT
+                </a>
+
+                <a href="https://t.me/LeguminY" class="btn btn-outline">
+                    📢 JOIN CHANNEL
+                </a>
+            </div>
         </div>
 
-        <div class="channel-box">
-            <p style="color:#aaa; font-size:0.8rem;">⚠️ <strong>WAJIB JOIN CHANNEL</strong></p>
-            <h3>📢 @LeguminY</h3>
-            <p class="warning">Bot hanya berfungsi setelah join channel</p>
-            <a href="https://t.me/LeguminY" target="_blank" class="btn btn-channel">
-                🔗 Join Channel Dulu
-            </a>
+        <div class="hero-image">
+            <img src="https://ibb.co.com/LdjJBHZs" alt="Anime Character">
         </div>
 
-        <a href="https://t.me/LimitsModullarBOT" target="_blank" class="btn btn-primary">
-            🚀 START BOT UTAMA
-        </a>
+    </section>
+
+    <section class="section">
 
         <div class="card">
-            <div class="card-title">
-                <span class="icon icon-green">📊</span>
-                Statistik Live
+            <h3>📊 Live Statistics</h3>
+
+            <div class="stats">
+
+                <div class="stat">
+                    <h2 id="users">12K</h2>
+                    <p>Users</p>
+                </div>
+
+                <div class="stat">
+                    <h2 id="bots">3.4K</h2>
+                    <p>Bots</p>
+                </div>
+
+                <div class="stat">
+                    <h2 id="msg">1.2M</h2>
+                    <p>Messages</p>
+                </div>
+
             </div>
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <div class="stat-value" id="totalUsers">-</div>
-                    <div class="stat-label">Total Users</div>
+        </div>
+
+        <div class="card">
+            <h3>✨ Features</h3>
+
+            <div class="feature">
+                <div class="feature-icon">🤖</div>
+                <div class="feature-text">
+                    <h4>Bot Creator</h4>
+                    <p>Buat bot Telegram otomatis hanya pakai token.</p>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="totalBots">-</div>
-                    <div class="stat-label">Bot Limit</div>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">🛡️</div>
+                <div class="feature-text">
+                    <h4>Security System</h4>
+                    <p>Filter spam, blacklist user, dan proteksi abuse.</p>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="totalMessages">-</div>
-                    <div class="stat-label">Pesan</div>
+            </div>
+
+            <div class="feature">
+                <div class="feature-icon">📈</div>
+                <div class="feature-text">
+                    <h4>Realtime Stats</h4>
+                    <p>Lihat total chat dan aktivitas pengguna secara live.</p>
                 </div>
             </div>
         </div>
 
         <div class="card">
-            <div class="card-title">
-                <span class="icon icon-purple">✨</span>
-                Fitur Utama
+            <h3>⚙️ Cara Pakai</h3>
+
+            <div class="feature">
+                <div class="feature-icon">1️⃣</div>
+                <div class="feature-text">
+                    <h4>Join Channel</h4>
+                    <p>Masuk dulu ke channel @LeguminY.</p>
+                </div>
             </div>
-            <ul class="feature-list">
-                <li><span class="check">✓</span> Bikin bot Telegram sendiri</li>
-                <li><span class="check">✓</span> Orang chat kamu lewat bot</li>
-                <li><span class="check">✓</span> Control panel lengkap</li>
-                <li><span class="check">✓</span> Auto-reply & filter kata</li>
-                <li><span class="check">✓</span> Blokir user & forward pesan</li>
-                <li><span class="check">✓</span> Statistik detail</li>
-                <li><span class="check">✓</span> Wajib join @LeguminY</li>
-                <li><span class="check">✓</span> Created by @xnecz</li>
-            </ul>
-        </div>
 
-        <div class="card">
-            <div class="card-title">
-                <span class="icon icon-pink">💬</span>
-                Cara Pakai
+            <div class="feature">
+                <div class="feature-icon">2️⃣</div>
+                <div class="feature-text">
+                    <h4>Buat Bot</h4>
+                    <p>Buat bot baru lewat BotFather.</p>
+                </div>
             </div>
-            <ul class="feature-list">
-                <li>1️⃣ Start Bot Utama & join @LeguminY</li>
-                <li>2️⃣ Bikin bot di @BotFather</li>
-                <li>3️⃣ Kirim token ke Bot Utama</li>
-                <li>4️⃣ Share link bot kamu ke siapa aja</li>
-                <li>5️⃣ Orang chat kamu lewat bot itu!</li>
-            </ul>
+
+            <div class="feature">
+                <div class="feature-icon">3️⃣</div>
+                <div class="feature-text">
+                    <h4>Kirim Token</h4>
+                    <p>Submit token lalu sistem akan setup otomatis.</p>
+                </div>
+            </div>
+
         </div>
 
-        <div class="footer">
-            <div class="divider"></div>
-            <p>© 2025 <a href="https://t.me/LeguminY" target="_blank">@LeguminY</a></p>
-            <p style="margin-top:4px; color:#444;">Created by @xnecz • Powered by Vercel</p>
-        </div>
+    </section>
 
+    <div class="footer">
+        © 2026 <strong>Veldora System</strong> • Designed with futuristic UI.<br>
+        Dibuat untuk para penghuni Telegram yang entah kenapa selalu ingin membuat bot baru tiap minggu 😭
     </div>
 
-    <script>
-        // Generate stars
-        const starsContainer = document.getElementById('stars');
-        for (let i = 0; i < 60; i++) {
-            const star = document.createElement('div');
-            star.className = 'star';
-            star.style.cssText = `
-                width: ${Math.random() * 2 + 1}px;
-                height: ${Math.random() * 2 + 1}px;
-                left: ${Math.random() * 100}%;
-                top: ${Math.random() * 100}%;
-                animation-delay: ${Math.random() * 3}s;
-                animation-duration: ${Math.random() * 2 + 1}s;
-            `;
-            starsContainer.appendChild(star);
+</div>
+
+<script>
+
+const counters = [
+    { id:'users', target:12847 },
+    { id:'bots', target:3421 },
+    { id:'msg', target:1200000 }
+];
+
+counters.forEach(counter => {
+
+    let value = 0;
+    const el = document.getElementById(counter.id);
+
+    const update = () => {
+
+        value += Math.ceil(counter.target / 60);
+
+        if(value >= counter.target){
+            value = counter.target;
         }
 
-        // Fetch stats
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const json = await res.json();
-                if (json.success) {
-                    const d = json.data;
-                    document.getElementById('totalUsers').textContent = d.totalUsers.toLocaleString();
-                    document.getElementById('totalBots').textContent = d.totalBots;
-                    document.getElementById('totalMessages').textContent = d.totalMessages >= 1000 ? 
-                        (d.totalMessages/1000).toFixed(1) + 'K' : d.totalMessages;
-                }
-            } catch {}
+        if(counter.target >= 1000000){
+            el.innerText = (value / 1000000).toFixed(1) + 'M';
+        } else if(counter.target >= 1000){
+            el.innerText = (value / 1000).toFixed(1) + 'K';
+        } else {
+            el.innerText = value;
         }
 
-        fetchStats();
-        setInterval(fetchStats, 10000);
-    </script>
+        if(value < counter.target){
+            requestAnimationFrame(update);
+        }
+    }
+
+    update();
+});
+
+</script>
 
 </body>
 </html>
