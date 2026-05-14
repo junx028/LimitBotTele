@@ -9,7 +9,7 @@ const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
 const CHANNEL_USERNAME = '@LeguminY';
 const CHANNEL_ID = '@LeguminY';
 const OWNER_ID = process.env.OWNER_ID || '';
-const VERCE_URL = process.env.VERCEL_URL || 'https://your-project.vercel.app';
+const VERCEL_URL = 'https://limit-bot.vercel.app';
 
 // ==================== DATABASE ====================
 async function getDB() {
@@ -107,10 +107,10 @@ async function verifyBotToken(token) {
 
 async function setLimitBotWebhook(token) {
     try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${VERCE_URL}/api/webhook-limit`);
+        const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${VERCEL_URL}/api/webhook-limit`);
         const data = await res.json();
         return data.ok;
-    } catch {
+    } catch (e) {
         return false;
     }
 }
