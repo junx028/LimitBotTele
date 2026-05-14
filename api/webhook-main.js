@@ -68,7 +68,9 @@ function initDB() {
 async function sendMessage(chatId, text, replyMarkup = null) {
     try {
         const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-        if (replyMarkup) payload.reply_markup = JSON.stringify(replyMarkup);
+        
+        // Perbaikan: Tidak perlu stringify karena payload akan di-stringify ke body request
+        if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`${TELEGRAM_API}/sendMessage`, {
             method: 'POST',
@@ -90,7 +92,7 @@ async function checkChannelMembership(userId) {
         });
         const data = await res.json();
         return ['creator', 'administrator', 'member'].includes(data.result?.status);
-    } catch {
+    } catch (error) {
         return false;
     }
 }
@@ -100,7 +102,7 @@ async function verifyBotToken(token) {
         const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
         const data = await res.json();
         return data.ok ? data.result : null;
-    } catch {
+    } catch (error) {
         return null;
     }
 }
@@ -110,7 +112,7 @@ async function setLimitBotWebhook(token) {
         const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${VERCEL_URL}/api/webhook-limit`);
         const data = await res.json();
         return data.ok;
-    } catch (e) {
+    } catch (error) {
         return false;
     }
 }
@@ -485,7 +487,7 @@ async function handleBroadcast(msg, target, broadcastMsg, broadcastPhoto) {
                 await sendMessage(uid, broadcastMsg);
             }
             success++;
-        } catch {
+        } catch (error) {
             failed++;
         }
     }
@@ -942,7 +944,7 @@ module.exports = async (req, res) => {
         // Init DB if needed
         try {
             await getDB();
-        } catch {
+        } catch (error) {
             await saveDB(initDB());
         }
         
