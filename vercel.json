@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/webhook-main.js", "use": "@vercel/node" },
+    { "src": "api/webhook-limit.js", "use": "@vercel/node" },
+    { "src": "api/stats.js", "use": "@vercel/node" },
+    { "src": "public/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/webhook-main", "dest": "api/webhook-main.js" },
+    { "src": "/api/webhook-limit", "dest": "api/webhook-limit.js" },
+    { "src": "/api/stats", "dest": "api/stats.js" },
+    { "src": "/(.*)", "dest": "public/$1" }
+  ]
+}
