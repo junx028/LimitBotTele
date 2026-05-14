@@ -50,9 +50,6 @@ async function saveDB(db) {
 async function sendMessage(chatId, text, replyMarkup = null, botToken) {
     try {
         const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-        
-        // Perbaikan: Tidak perlu stringify replyMarkup karena object payload
-        // keseluruhan nantinya akan di-stringify ke dalam body request.
         if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
@@ -69,7 +66,6 @@ async function sendMessage(chatId, text, replyMarkup = null, botToken) {
 async function sendPhoto(chatId, photoUrl, caption = '', replyMarkup = null, botToken) {
     try {
         const payload = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'HTML' };
-        
         if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
@@ -89,19 +85,6 @@ function containsBlacklistWord(text, blacklistWords) {
     return blacklistWords.some(word => lowerText.includes(word.toLowerCase()));
 }
 
-// ==================== FIND BOT BY TOKEN ====================
-async function findBotByToken(token) {
-    const db = await getDB();
-    if (!db || !db.bots) return null;
-    
-    for (const [botId, bot] of Object.entries(db.bots)) {
-        if (bot.token === token) {
-            return { ...bot, botId: botId };
-        }
-    }
-    return null;
-}
-
 // ==================== MAIN HANDLER ====================
 module.exports = async (req, res) => {
     // GET request - health check
@@ -111,6 +94,14 @@ module.exports = async (req, res) => {
             message: 'Bot Limit System Active',
             creator: CREATOR_USERNAME 
         });
+    }
+    
+    // PERBAIKAN: Ambil botId dari URL query parameter Webhook (e.g. ?botId=BOT123)
+    let targetBotId = req.query?.botId;
+    if (!targetBotId && req.url) {
+        // Fallback kalau pakai environment selain Vercel yang req.query-nya undefined
+        const match = req.url.match(/botId=([^&]+)/);
+        if (match) targetBotId = match[1];
     }
     
     const body = req.body;
@@ -128,40 +119,31 @@ module.exports = async (req, res) => {
             return res.status(200).json({ status: 'OK' });
         }
         
-        // Cari bot dari callback data
         let currentBot = null;
         let botToken = null;
         
-        for (const [botId, bot] of Object.entries(db.bots)) {
-            if (data.includes(botId)) {
-                currentBot = bot;
-                botToken = bot.token;
-                break;
-            }
-        }
-        
-        // Kalau gak ketemu, coba cek semua bot yang punya owner ini
-        if (!currentBot) {
+        // Deteksi bot berdasarkan parameter URL atau fallback mencocokkan data callback
+        if (targetBotId && db.bots[targetBotId]) {
+            currentBot = db.bots[targetBotId];
+            botToken = currentBot.token;
+            currentBot.botId = targetBotId;
+        } else {
             for (const [botId, bot] of Object.entries(db.bots)) {
-                if (bot.ownerId === userId) {
+                if (data.includes(botId) || bot.ownerId === userId) {
                     currentBot = bot;
                     botToken = bot.token;
+                    currentBot.botId = botId;
                     break;
                 }
             }
         }
         
         if (!currentBot || !botToken) {
-            // Answer callback
             try {
                 await fetch(`https://api.telegram.org/bot${MAIN_BOT_TOKEN}/answerCallbackQuery`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        callback_query_id: callback.id,
-                        text: '⚠️ Bot tidak ditemukan!',
-                        show_alert: true
-                    })
+                    body: JSON.stringify({ callback_query_id: callback.id, text: '⚠️ Bot tidak ditemukan!', show_alert: true })
                 });
             } catch (error) {}
             return res.status(200).json({ status: 'OK' });
@@ -172,10 +154,7 @@ module.exports = async (req, res) => {
             await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    callback_query_id: callback.id,
-                    text: '⏳ Memproses...'
-                })
+                body: JSON.stringify({ callback_query_id: callback.id, text: '⏳ Memproses...' })
             });
         } catch (error) {}
         
@@ -367,11 +346,7 @@ module.exports = async (req, res) => {
             bot.chatLog = [];
             await saveDB(db);
             
-            await sendMessage(chatId,
-                '✅ Bot berhasil direset!',
-                null,
-                botToken
-            );
+            await sendMessage(chatId, '✅ Bot berhasil direset!', null, botToken);
             return res.status(200).json({ status: 'OK' });
         }
         
@@ -449,11 +424,7 @@ module.exports = async (req, res) => {
             settings.blockedUsers[blockUserId] = { blockedAt: new Date().toISOString() };
             await saveDB(db);
             
-            await sendMessage(chatId,
-                `✅ User <code>${blockUserId}</code> berhasil diblokir!`,
-                null,
-                botToken
-            );
+            await sendMessage(chatId, `✅ User <code>${blockUserId}</code> berhasil diblokir!`, null, botToken);
             return res.status(200).json({ status: 'OK' });
         }
         
@@ -470,61 +441,17 @@ module.exports = async (req, res) => {
         const senderUsername = fromUser.username || '';
         const senderName = fromUser.first_name || 'Unknown';
         
-        // Cari bot berdasarkan webhook URL atau chat ID
         const db = await getDB();
         if (!db) {
             return res.status(200).json({ status: 'OK' });
         }
         
-        // Mencari bot yang menerima pesan ini
-        // Cara: cek semua bot, coba kirim test (atau dari URL webhook)
         let currentBot = null;
         
-        // Coba cari dari update (bot yang dimaksud)
-        // Karena setiap bot limit punya webhook sendiri, 
-        // kita bisa identifikasi dari bot mana yang menerima pesan
-        
-        // Metode: iterasi semua bot, pakai token untuk cek getMe
-        for (const [botId, bot] of Object.entries(db.bots)) {
-            if (bot.status === 'active' || bot.status === 'paused') {
-                // Coba getMe untuk cocokin
-                try {
-                    const getMeRes = await fetch(`https://api.telegram.org/bot${bot.token}/getMe`);
-                    const getMeData = await getMeRes.json();
-                    if (getMeData.ok && getMeData.result.id === fromUser.id) {
-                        // Ini botnya sendiri yang ngirim, skip
-                        continue;
-                    }
-                    // Kita gak bisa langsung tahu bot mana dari sini
-                    // Pakai cara: cek apakah sender = owner
-                    if (senderId === bot.ownerId) {
-                        currentBot = bot;
-                        currentBot.botId = botId;
-                        break;
-                    }
-                } catch (error) {}
-            }
-        }
-        
-        // Fallback: cari bot pertama yang aktif dengan owner ini (buat testing)
-        if (!currentBot && text === '/panel') {
-            for (const [botId, bot] of Object.entries(db.bots)) {
-                if (bot.ownerId === senderId && bot.status === 'active') {
-                    currentBot = bot;
-                    currentBot.botId = botId;
-                    break;
-                }
-            }
-        }
-        
-        // Fallback kedua: cari bot dari chat context
-        if (!currentBot) {
-            // Coba cek apakah ini owner yang punya bot
-            const ownerBots = Object.entries(db.bots).filter(([_, b]) => b.ownerId === senderId);
-            if (ownerBots.length > 0) {
-                currentBot = ownerBots[0][1];
-                currentBot.botId = ownerBots[0][0];
-            }
+        // Deteksi bot mana yang menerima pesan langsung dari URL ?botId=
+        if (targetBotId && db.bots[targetBotId]) {
+            currentBot = db.bots[targetBotId];
+            currentBot.botId = targetBotId;
         }
         
         if (!currentBot) {
@@ -639,22 +566,12 @@ module.exports = async (req, res) => {
             const replyText = parts.slice(1).join(' ');
             
             if (!targetUserId || !replyText) {
-                await sendMessage(chatId,
-                    '❌ Format: /reply USER_ID PESAN\nContoh: /reply 123456 Halo!',
-                    null, botToken
-                );
+                await sendMessage(chatId, '❌ Format: /reply USER_ID PESAN\nContoh: /reply 123456 Halo!', null, botToken);
                 return res.status(200).json({ status: 'OK' });
             }
             
-            await sendMessage(targetUserId,
-                `📤 <b>Balasan dari Owner:</b>\n\n${replyText}`,
-                null, botToken
-            );
-            
-            await sendMessage(chatId,
-                `✅ Balasan terkirim ke user ${targetUserId}`,
-                null, botToken
-            );
+            await sendMessage(targetUserId, `📤 <b>Balasan dari Owner:</b>\n\n${replyText}`, null, botToken);
+            await sendMessage(chatId, `✅ Balasan terkirim ke user ${targetUserId}`, null, botToken);
             
             // Update stats
             if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
@@ -683,10 +600,7 @@ module.exports = async (req, res) => {
             const message = spaceIndex > 0 ? parts.substring(spaceIndex + 1) : parts;
             
             if (!message || message === botIdFromCmd) {
-                await sendMessage(chatId,
-                    '❌ Format: /setautoreply BOT_ID PESAN',
-                    null, botToken
-                );
+                await sendMessage(chatId, '❌ Format: /setautoreply BOT_ID PESAN', null, botToken);
                 return res.status(200).json({ status: 'OK' });
             }
             
@@ -695,10 +609,7 @@ module.exports = async (req, res) => {
             bot.settings.autoReply = true;
             await saveDB(db);
             
-            await sendMessage(chatId,
-                `✅ Auto reply diupdate!\nPesan: "${message}"`,
-                null, botToken
-            );
+            await sendMessage(chatId, `✅ Auto reply diupdate!\nPesan: "${message}"`, null, botToken);
             return res.status(200).json({ status: 'OK' });
         }
         
@@ -795,10 +706,7 @@ module.exports = async (req, res) => {
             
             // Check blacklist
             if (containsBlacklistWord(text, settings.blacklistWords)) {
-                await sendMessage(chatId,
-                    '⚠️ Pesan kamu mengandung kata yang diblokir.',
-                    null, botToken
-                );
+                await sendMessage(chatId, '⚠️ Pesan kamu mengandung kata yang diblokir.', null, botToken);
                 return res.status(200).json({ status: 'OK' });
             }
             
@@ -871,10 +779,7 @@ module.exports = async (req, res) => {
             
             // Auto reply
             if (settings.autoReply) {
-                await sendMessage(chatId,
-                    settings.autoReplyText || 'Maaf, owner sedang offline.',
-                    null, botToken
-                );
+                await sendMessage(chatId, settings.autoReplyText || 'Maaf, owner sedang offline.', null, botToken);
             }
             
             return res.status(200).json({ status: 'OK' });
