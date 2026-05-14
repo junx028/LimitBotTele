@@ -22,7 +22,7 @@ async function getDB() {
         });
         const gist = await res.json();
         return JSON.parse(gist.files['database.json'].content);
-    } catch (e) {
+    } catch (error) {
         return initDB();
     }
 }
@@ -68,8 +68,6 @@ function initDB() {
 async function sendMessage(chatId, text, replyMarkup = null) {
     try {
         const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-        
-        // Perbaikan: Tidak perlu stringify karena payload akan di-stringify ke body request
         if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -78,7 +76,7 @@ async function sendMessage(chatId, text, replyMarkup = null) {
             body: JSON.stringify(payload)
         });
         return true;
-    } catch (e) {
+    } catch (error) {
         return false;
     }
 }
@@ -107,9 +105,10 @@ async function verifyBotToken(token) {
     }
 }
 
-async function setLimitBotWebhook(token) {
+async function setLimitBotWebhook(token, botId) {
     try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${VERCEL_URL}/api/webhook-limit`);
+        // PERBAIKAN: Menambahkan parameter ?botId= di URL Webhook agar bot limit tidak bingung
+        const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${VERCEL_URL}/api/webhook-limit?botId=${botId}`);
         const data = await res.json();
         return data.ok;
     } catch (error) {
@@ -245,14 +244,16 @@ async function handleRegisterBot(msg, token) {
         return sendMessage(chatId, '❌ Kamu sudah mencapai limit 5 bot!');
     }
     
+    // Bikin botId duluan biar bisa dikirim ke webhook
+    const botId = 'BOT' + Date.now().toString(36).toUpperCase();
+    
     // Set webhook for limit bot
-    const webhookSet = await setLimitBotWebhook(token);
+    const webhookSet = await setLimitBotWebhook(token, botId);
     if (!webhookSet) {
-        return sendMessage(chatId, '❌ Gagal mengatur webhook! Coba lagi nanti.');
+        return sendMessage(chatId, '❌ Gagal mengatur webhook! Pastikan VERCEL_URL sudah benar.');
     }
     
     // Save to database
-    const botId = 'BOT' + Date.now().toString(36).toUpperCase();
     db.bots[botId] = {
         botId: botId,
         ownerId: userId,
@@ -540,8 +541,9 @@ async function handleCallback(callback) {
     const chatId = callback.message.chat.id;
     const data = callback.data;
     const msg = callback.message;
-
-    msg.from = callback.from;
+    
+    // PERBAIKAN: Masukkan data pengirim (user) ke objek pesan
+    msg.from = callback.from; 
     
     // Check member
     if (data === 'check_member') {
