@@ -20,7 +20,7 @@ async function getDB() {
         });
         const gist = await res.json();
         return JSON.parse(gist.files['database.json'].content);
-    } catch (e) {
+    } catch (error) {
         return null;
     }
 }
@@ -41,7 +41,7 @@ async function saveDB(db) {
             })
         });
         return true;
-    } catch (e) {
+    } catch (error) {
         return false;
     }
 }
@@ -50,7 +50,10 @@ async function saveDB(db) {
 async function sendMessage(chatId, text, replyMarkup = null, botToken) {
     try {
         const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-        if (replyMarkup) payload.reply_markup = JSON.stringify(replyMarkup);
+        
+        // Perbaikan: Tidak perlu stringify replyMarkup karena object payload
+        // keseluruhan nantinya akan di-stringify ke dalam body request.
+        if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
@@ -58,7 +61,7 @@ async function sendMessage(chatId, text, replyMarkup = null, botToken) {
             body: JSON.stringify(payload)
         });
         return true;
-    } catch (e) {
+    } catch (error) {
         return false;
     }
 }
@@ -66,7 +69,8 @@ async function sendMessage(chatId, text, replyMarkup = null, botToken) {
 async function sendPhoto(chatId, photoUrl, caption = '', replyMarkup = null, botToken) {
     try {
         const payload = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'HTML' };
-        if (replyMarkup) payload.reply_markup = JSON.stringify(replyMarkup);
+        
+        if (replyMarkup) payload.reply_markup = replyMarkup;
         
         await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
             method: 'POST',
@@ -74,7 +78,7 @@ async function sendPhoto(chatId, photoUrl, caption = '', replyMarkup = null, bot
             body: JSON.stringify(payload)
         });
         return true;
-    } catch (e) {
+    } catch (error) {
         return false;
     }
 }
@@ -159,7 +163,7 @@ module.exports = async (req, res) => {
                         show_alert: true
                     })
                 });
-            } catch {}
+            } catch (error) {}
             return res.status(200).json({ status: 'OK' });
         }
         
@@ -173,7 +177,7 @@ module.exports = async (req, res) => {
                     text: '⏳ Memproses...'
                 })
             });
-        } catch {}
+        } catch (error) {}
         
         const bot = currentBot;
         const settings = bot.settings || {};
@@ -419,7 +423,7 @@ module.exports = async (req, res) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: chatId, message_id: messageId })
                 });
-            } catch {}
+            } catch (error) {}
             return res.status(200).json({ status: 'OK' });
         }
         
@@ -465,7 +469,6 @@ module.exports = async (req, res) => {
         const senderId = fromUser.id;
         const senderUsername = fromUser.username || '';
         const senderName = fromUser.first_name || 'Unknown';
-        const messageId = msg.message_id;
         
         // Cari bot berdasarkan webhook URL atau chat ID
         const db = await getDB();
@@ -499,7 +502,7 @@ module.exports = async (req, res) => {
                         currentBot.botId = botId;
                         break;
                     }
-                } catch {}
+                } catch (error) {}
             }
         }
         
@@ -525,10 +528,6 @@ module.exports = async (req, res) => {
         }
         
         if (!currentBot) {
-            // Coba kirim error ke user
-            try {
-                // Gak bisa kirim karena gak tau tokennya
-            } catch {}
             return res.status(200).json({ status: 'OK', message: 'Bot not identified' });
         }
         
@@ -604,7 +603,7 @@ module.exports = async (req, res) => {
                                 parse_mode: 'HTML'
                             })
                         });
-                    } catch {}
+                    } catch (error) {}
                 }
             }
             
@@ -867,7 +866,7 @@ module.exports = async (req, res) => {
                             reply_markup: forwardKeyboard
                         })
                     });
-                } catch {}
+                } catch (error) {}
             }
             
             // Auto reply
