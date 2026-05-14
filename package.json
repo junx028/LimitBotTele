@@ -1,0 +1,15 @@
+{
+  "name": "bot-limit-system",
+  "version": "3.0.0",
+  "description": "Bot Limit System - Wajib Join @LeguminY | by @xnecz",
+  "main": "api/webhook-main.js",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
