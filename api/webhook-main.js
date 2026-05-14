@@ -540,6 +540,8 @@ async function handleCallback(callback) {
     const chatId = callback.message.chat.id;
     const data = callback.data;
     const msg = callback.message;
+
+    msg.from = callback.from;
     
     // Check member
     if (data === 'check_member') {
