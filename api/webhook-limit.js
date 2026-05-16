@@ -7,22 +7,33 @@ const GIST_API = `https://api.github.com/gists/${GIST_ID}`;
 const MAIN_BOT_TOKEN = process.env.BOT_TOKEN;
 const MAIN_BOT_USERNAME = process.env.MAIN_BOT_USERNAME || 'LimitsModullarBOT';
 const CREATOR_USERNAME = '@xnecz';
+const MAIN_BOT_URL = 'https://limit-bot.vercel.app';
+const BOT_START_TIME = Date.now();
+
+// ==================== UPTIME ====================
+function getUptime() {
+    const s = Math.floor((Date.now() - BOT_START_TIME) / 1000);
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    const parts = [];
+    if (d > 0) parts.push(`${d}h`);
+    if (h > 0) parts.push(`${h}j`);
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0) parts.push(`${sec}d`);
+    return parts.join(' ') || '0d';
+}
 
 // ==================== DATABASE ====================
 async function getDB() {
     try {
-        const res = await fetch(GIST_API, {
+        const r = await fetch(GIST_API, {
             headers: {
                 'Authorization': `token ${GITHUB_TOKEN}`,
                 'Accept': 'application/vnd.github.v3+json'
             }
         });
-        const gist = await res.json();
-        return JSON.parse(gist.files['database.json'].content);
-    } catch (error) {
-        console.error("DB Fetch Error:", error);
-        return null;
-    }
+        const g = await r.json();
+        return JSON.parse(g.files['database.json'].content);
+    } catch (e) { return null; }
 }
 
 async function saveDB(db) {
@@ -35,271 +46,292 @@ async function saveDB(db) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                files: {
-                    'database.json': { content: JSON.stringify(db, null, 2) }
-                }
+                files: { 'database.json': { content: JSON.stringify(db, null, 2) } }
             })
         });
         return true;
-    } catch (error) {
-        console.error("DB Save Error:", error);
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
 // ==================== HELPERS ====================
-async function sendMessage(chatId, text, replyMarkup = null, botToken) {
+async function sendMsg(chatId, text, replyMarkup, botToken) {
     try {
-        const payload = { chat_id: chatId, text: text, parse_mode: 'HTML', disable_web_page_preview: true };
+        const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
         if (replyMarkup) payload.reply_markup = replyMarkup;
-        
         await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
         return true;
-    } catch (error) {
-        return false;
-    }
+    } catch (e) { return false; }
 }
 
-function containsBlacklistWord(text, blacklistWords) {
-    if (!text || !blacklistWords || !blacklistWords.length) return false;
-    const lowerText = text.toLowerCase();
-    return blacklistWords.some(word => lowerText.includes(word.toLowerCase()));
+async function react(chatId, msgId, emoji, botToken) {
+    try {
+        await fetch(`https://api.telegram.org/bot${botToken}/setMessageReaction`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: chatId,
+                message_id: msgId,
+                reaction: [{ type: 'emoji', emoji: emoji }]
+            })
+        });
+        return true;
+    } catch (e) { return false; }
 }
 
-function formatUptime(ms) {
-    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-    const daysMs = ms % (24 * 60 * 60 * 1000);
-    const hours = Math.floor(daysMs / (60 * 60 * 1000));
-    const hoursMs = ms % (60 * 60 * 1000);
-    const minutes = Math.floor(hoursMs / (60 * 1000));
-    
-    let result = '';
-    if (days > 0) result += `${days} Hari, `;
-    if (hours > 0 || days > 0) result += `${hours} Jam, `;
-    result += `${minutes} Menit`;
-    return result;
+function hasBlacklist(text, words) {
+    if (!text || !words || !words.length) return false;
+    return words.some(w => text.toLowerCase().includes(w.toLowerCase()));
 }
 
 // ==================== MAIN HANDLER ====================
 module.exports = async (req, res) => {
     // GET request - health check
     if (req.method !== 'POST') {
-        const memoryUsage = process.memoryUsage().rss / 1024 / 1024;
-        return res.status(200).json({ 
-            status: 'OK', 
+        return res.status(200).json({
+            status: 'OK',
             message: 'Bot Limit System Active',
             creator: CREATOR_USERNAME,
-            memory_usage_mb: memoryUsage.toFixed(2)
+            uptime: getUptime()
         });
     }
-    
-    // Ambil botId dari URL query parameter Webhook (e.g. ?botId=BOT123)
+
+    const body = req.body;
+
+    // Ambil botId dari URL query parameter (?botId=XXX)
     let targetBotId = req.query?.botId;
     if (!targetBotId && req.url) {
         const match = req.url.match(/botId=([^&]+)/);
         if (match) targetBotId = match[1];
     }
-    
-    const body = req.body;
-    
-    // ==================== HANDLE CALLBACK QUERY ====================
+
+    // ==================== CALLBACK QUERY HANDLER ====================
     if (body.callback_query) {
-        const callback = body.callback_query;
-        const data = callback.data;
-        const chatId = callback.message.chat.id;
-        const userId = callback.from.id;
-        const messageId = callback.message.message_id;
-        
+        const q = body.callback_query;
+        const data = q.data;
+        const chatId = q.message.chat.id;
+        const userId = q.from.id;
+        const messageId = q.message.message_id;
+
         const db = await getDB();
         if (!db) return res.status(200).json({ status: 'OK' });
-        
-        let currentBot = null;
-        let botToken = null;
-        
-        // Deteksi bot
+
+        // Cari bot
+        let bot = null, botToken = null;
         if (targetBotId && db.bots[targetBotId]) {
-            currentBot = db.bots[targetBotId];
-            botToken = currentBot.token;
-            currentBot.botId = targetBotId;
+            bot = db.bots[targetBotId];
+            bot.botId = targetBotId;
+            botToken = bot.token;
         } else {
-            for (const [botId, bot] of Object.entries(db.bots)) {
-                if (data.includes(botId) || bot.ownerId === userId) {
-                    currentBot = bot;
-                    botToken = bot.token;
-                    currentBot.botId = botId;
+            for (const [id, b] of Object.entries(db.bots)) {
+                if (data.includes(id) || b.ownerId === userId) {
+                    bot = b;
+                    bot.botId = id;
+                    botToken = b.token;
                     break;
                 }
             }
         }
-        
-        if (!currentBot || !botToken) {
+
+        if (!bot || !botToken) {
             try {
                 await fetch(`https://api.telegram.org/bot${MAIN_BOT_TOKEN}/answerCallbackQuery`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ callback_query_id: callback.id, text: '⚠️ Bot tidak ditemukan!', show_alert: true })
+                    body: JSON.stringify({
+                        callback_query_id: q.id,
+                        text: '⚠️ Bot tidak ditemukan!',
+                        show_alert: true
+                    })
                 });
-            } catch (error) {}
+            } catch (e) {}
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Setup startTime jika belum ada
-        if (!currentBot.startTime) {
-            currentBot.startTime = Date.now();
-            await saveDB(db);
-        }
-        
+
         // Answer callback
         try {
             await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ callback_query_id: callback.id, text: '⏳ Memproses...' })
+                body: JSON.stringify({ callback_query_id: q.id })
             });
-        } catch (error) {}
-        
-        const bot = currentBot;
+        } catch (e) {}
+
         const settings = bot.settings || {};
         const stats = bot.stats || {};
-        const uptime = formatUptime(Date.now() - bot.startTime);
-        
-        // Handle /panel Callback
+
+        // ============ CONTROL PANEL ============
         if (data === 'limit_panel' || data.startsWith('limit_panel_')) {
             const keyboard = {
                 inline_keyboard: [
-                    [{ text: '📊 Statistik', callback_data: `limit_stats_${bot.botId}` }, { text: '📋 Chat Log', callback_data: `limit_chatlog_${bot.botId}` }],
-                    [{ text: '⚙️ Auto Reply', callback_data: `limit_autoreply_${bot.botId}` }, { text: '🚫 Blacklist', callback_data: `limit_blacklist_${bot.botId}` }],
-                    [{ text: '📤 Forward', callback_data: `limit_forward_${bot.botId}` }, { text: '🔔 Notifikasi', callback_data: `limit_notify_${bot.botId}` }],
-                    [{ text: '👤 Blokir User', callback_data: `limit_block_${bot.botId}` }, { text: settings.isPaused ? '▶️ Resume Bot' : '⏸️ Pause Bot', callback_data: `limit_pause_${bot.botId}` }],
-                    [{ text: '🗑️ Reset Data', callback_data: `limit_reset_${bot.botId}` }],
-                    [{ text: '🔙 Tutup Panel', callback_data: `limit_close` }]
+                    [{ text: '📊 Statistik', callback_data: `limit_stats_${bot.botId}` },
+                     { text: '🤖 Auto Reply', callback_data: `limit_autoreply_${bot.botId}` }],
+                    [{ text: '🚫 Blacklist', callback_data: `limit_blacklist_${bot.botId}` },
+                     { text: '👤 Blokir User', callback_data: `limit_block_${bot.botId}` }],
+                    [{ text: '📤 Forward', callback_data: `limit_forward_${bot.botId}` },
+                     { text: '🔔 Notifikasi', callback_data: `limit_notify_${bot.botId}` }],
+                    [{ text: settings.isPaused ? '▶️ Resume' : '⏸️ Pause', callback_data: `limit_pause_${bot.botId}` }],
+                    [{ text: '📋 Chat Log', callback_data: `limit_chatlog_${bot.botId}` },
+                     { text: '🗑️ Reset Bot', callback_data: `limit_reset_${bot.botId}` }],
+                    [{ text: '🔙 Tutup', callback_data: 'limit_close' }]
                 ]
             };
-            
-            await sendMessage(chatId,
-                `🎛️ <b>CONTROL PANEL (OWNER)</b>\n\n` +
-                `🤖 <b>Bot:</b> @${bot.botUsername}\n` +
-                `⏱️ <b>Uptime:</b> ${uptime}\n\n` +
+
+            await sendMsg(chatId,
+                `🎛️ <b>CONTROL PANEL</b>\n\n` +
+                `🤖 Bot: @${bot.botUsername}\n` +
+                `🆔 ID: ${bot.botId}\n\n` +
                 `📊 <b>Statistik:</b>\n` +
-                `├── Total Pesan: ${stats.totalMessages || 0}\n` +
-                `├── User Unik: ${Object.keys(stats.uniqueUsers || {}).length}\n` +
-                `└── Interaksi Hari Ini: ${stats.todayMessages || 0}\n\n` +
-                `⚙️ <b>Status Fitur:</b>\n` +
-                `├── Auto Reply: ${settings.autoReply ? '✅ Aktif' : '❌ Mati'}\n` +
-                `├── Forward Pesan: ${settings.forwardToOwner ? '✅ Aktif' : '❌ Mati'}\n` +
-                `├── Notifikasi User: ${settings.notifyOwner ? '✅ Aktif' : '❌ Mati'}\n` +
-                `└── Status Bot: ${settings.isPaused ? '⏸️ DIPAUSE' : '✅ BERJALAN'}\n\n` +
-                `<i>Gunakan /help untuk melihat daftar perintah.</i>`,
+                `├ Total: ${stats.totalMessages || 0}\n` +
+                `├ Masuk: ${stats.totalIncoming || 0}\n` +
+                `├ Keluar: ${stats.totalOutgoing || 0}\n` +
+                `└ User: ${Object.keys(stats.uniqueUsers || {}).length}\n\n` +
+                `⚙️ <b>Status:</b>\n` +
+                `├ Auto Reply: ${settings.autoReply ? '✅' : '❌'}\n` +
+                `├ Forward: ${settings.forwardToOwner ? '✅' : '❌'}\n` +
+                `├ Notifikasi: ${settings.notifyOwner ? '✅' : '❌'}\n` +
+                `└ Status: ${settings.isPaused ? '⏸️ PAUSED' : '✅ AKTIF'}\n\n` +
+                `🔗 t.me/${bot.botUsername}`,
                 keyboard,
                 botToken
             );
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle stats
+
+        // ============ STATS ============
         if (data.startsWith('limit_stats_')) {
-            const st = stats;
-            await sendMessage(chatId,
-                `📊 <b>STATISTIK DETAIL</b>\n\n` +
-                `🤖 @${bot.botUsername}\n` +
-                `⏱ Uptime: ${uptime}\n\n` +
-                `📨 Total Pesan: ${st.totalMessages || 0}\n` +
-                `📥 Pesan Masuk: ${st.totalIncoming || 0}\n` +
-                `📤 Pesan Keluar: ${st.totalOutgoing || 0}\n` +
-                `👥 Jumlah Pengguna: ${Object.keys(st.uniqueUsers || {}).length}\n` +
-                `📅 Pesan Hari Ini: ${st.todayMessages || 0}`,
+            await sendMsg(chatId,
+                `📊 <b>STATISTIK</b>\n\n` +
+                `🤖 @${bot.botUsername}\n\n` +
+                `📨 Total: ${stats.totalMessages || 0}\n` +
+                `📥 Masuk: ${stats.totalIncoming || 0}\n` +
+                `📤 Keluar: ${stats.totalOutgoing || 0}\n` +
+                `👥 User Unik: ${Object.keys(stats.uniqueUsers || {}).length}\n` +
+                `📅 Hari Ini: ${stats.todayMessages || 0}`,
                 { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
                 botToken
             );
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle auto reply toggle
+
+        // ============ TOGGLE HANDLERS ============
         if (data.startsWith('limit_autoreply_')) {
             bot.settings.autoReply = !settings.autoReply;
             await saveDB(db);
-            await sendMessage(chatId,
+            await sendMsg(chatId,
                 `✅ Auto Reply: <b>${bot.settings.autoReply ? 'AKTIF' : 'MATI'}</b>\n\n` +
-                `Pesan Saat Ini:\n<i>"${settings.autoReplyText || 'Maaf, owner sedang offline.'}"</i>\n\n` +
-                `Untuk mengubah pesan, ketik:\n<code>/setautoreply [Pesan Baru]</code>`,
+                `Pesan: "${settings.autoReplyText || 'Owner sedang offline.'}"\n\n` +
+                `Edit: /setautoreply PESAN`,
                 { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
                 botToken
             );
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle forward, notify, pause toggles (Similar logic)
-        const toggles = {
-            'limit_forward_': ['forwardToOwner', 'Forward ke Telegram'],
-            'limit_notify_': ['notifyOwner', 'Notifikasi User Baru'],
-            'limit_pause_': ['isPaused', 'Status Pause']
-        };
 
-        for (const [prefix, [settingKey, name]] of Object.entries(toggles)) {
-            if (data.startsWith(prefix)) {
-                bot.settings[settingKey] = !settings[settingKey];
-                if (settingKey === 'isPaused') bot.status = bot.settings.isPaused ? 'paused' : 'active';
-                await saveDB(db);
-                await sendMessage(chatId, `✅ ${name}: <b>${bot.settings[settingKey] ? 'AKTIF' : 'MATI'}</b>`, 
-                    { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] }, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
+        if (data.startsWith('limit_forward_')) {
+            bot.settings.forwardToOwner = !settings.forwardToOwner;
+            await saveDB(db);
+            await sendMsg(chatId,
+                `✅ Forward: <b>${bot.settings.forwardToOwner ? 'AKTIF' : 'MATI'}</b>`,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
+            return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle chat log
+
+        if (data.startsWith('limit_notify_')) {
+            bot.settings.notifyOwner = !settings.notifyOwner;
+            await saveDB(db);
+            await sendMsg(chatId,
+                `✅ Notifikasi: <b>${bot.settings.notifyOwner ? 'AKTIF' : 'MATI'}</b>`,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
+            return res.status(200).json({ status: 'OK' });
+        }
+
+        if (data.startsWith('limit_pause_')) {
+            bot.settings.isPaused = !settings.isPaused;
+            bot.status = bot.settings.isPaused ? 'paused' : 'active';
+            await saveDB(db);
+            await sendMsg(chatId,
+                `✅ Bot: <b>${bot.settings.isPaused ? 'DIPAUSE' : 'DIAKTIFKAN'}</b>`,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
+            return res.status(200).json({ status: 'OK' });
+        }
+
+        // ============ CHAT LOG ============
         if (data.startsWith('limit_chatlog_')) {
             const log = (bot.chatLog || []).slice(-10).reverse();
             let text = '📋 <b>10 CHAT TERAKHIR</b>\n\n';
             if (log.length > 0) {
                 for (const l of log) {
-                    const dir = l.direction === 'in' ? '📥' : '📤';
-                    text += `${dir} <b>${l.from}</b>: "${(l.text || '').substring(0, 40)}..."\n`;
-                    text += `   <tg-spoiler>${new Date(l.timestamp).toLocaleString('id-ID')}</tg-spoiler>\n\n`;
+                    text += `${l.direction === 'in' ? '📥' : '📤'} ${l.from}: "${(l.text || '').substring(0, 30)}"\n`;
                 }
-            } else text += 'Belum ada chat.';
-            
-            await sendMessage(chatId, text, { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] }, botToken);
-            return res.status(200).json({ status: 'OK' });
-        }
-        
-        // Handle reset
-        if (data.startsWith('limit_reset_')) {
-            await sendMessage(chatId, `⚠️ <b>PERINGATAN RESET</b>\n\nSemua statistik, riwayat chat, dan user akan dihapus permanen. Lanjutkan?`,
-                { inline_keyboard: [[{ text: '✅ YA, RESET', callback_data: `limit_confirmreset_${bot.botId}` }, { text: '❌ BATAL', callback_data: `limit_panel_${bot.botId}` }]] },
+            } else {
+                text += 'Belum ada chat.';
+            }
+            await sendMsg(chatId, text,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
                 botToken
             );
             return res.status(200).json({ status: 'OK' });
         }
-        
+
+        // ============ RESET ============
+        if (data.startsWith('limit_reset_')) {
+            await sendMsg(chatId,
+                '⚠️ <b>RESET BOT?</b>\n\nSemua chat history akan dihapus.',
+                {
+                    inline_keyboard: [
+                        [{ text: '✅ YA, RESET', callback_data: `limit_confirmreset_${bot.botId}` },
+                         { text: '❌ BATAL', callback_data: `limit_panel_${bot.botId}` }]
+                    ]
+                },
+                botToken
+            );
+            return res.status(200).json({ status: 'OK' });
+        }
+
         if (data.startsWith('limit_confirmreset_')) {
             bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
             bot.chatLog = [];
-            bot.startTime = Date.now(); // Reset uptime
             await saveDB(db);
-            await sendMessage(chatId, '✅ Bot berhasil direset ke pengaturan awal!', { inline_keyboard: [[{ text: '🔙 Kembali ke Panel', callback_data: `limit_panel_${bot.botId}` }]] }, botToken);
+            await sendMsg(chatId, '✅ Bot berhasil direset!',
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // View Blacklist / Blocked
+
+        // ============ BLACKLIST ============
         if (data.startsWith('limit_blacklist_')) {
             const words = (settings.blacklistWords || []).join(', ') || '(kosong)';
-            await sendMessage(chatId, `🚫 <b>BLACKLIST KATA</b>\n\nKata diblokir: <b>${words}</b>\n\nCara Tambah:\n<code>/addblacklist KATA</code>\n\nCara Hapus:\n<code>/removeblacklist KATA</code>`, 
-                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] }, botToken);
+            await sendMsg(chatId,
+                `🚫 <b>BLACKLIST KATA</b>\n\nKata: ${words}\n\nTambah: /addblacklist KATA\nHapus: /removeblacklist KATA`,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
             return res.status(200).json({ status: 'OK' });
         }
-        
+
+        // ============ BLOCK USER ============
         if (data.startsWith('limit_block_')) {
             const blocked = Object.keys(settings.blockedUsers || {}).join(', ') || '(kosong)';
-            await sendMessage(chatId, `👤 <b>USER DIBLOKIR</b>\n\nID Terblokir: <b>${blocked}</b>\n\nCara Blokir:\n<code>/block ID_USER</code>\n\nCara Buka Blokir:\n<code>/unblock ID_USER</code>`, 
-                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] }, botToken);
+            await sendMsg(chatId,
+                `👤 <b>BLOKIR USER</b>\n\nUser: ${blocked}\n\nBlokir: /block USER_ID\nUnblock: /unblock USER_ID`,
+                { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle close
+
+        // ============ CLOSE ============
         if (data === 'limit_close') {
             try {
                 await fetch(`https://api.telegram.org/bot${botToken}/deleteMessage`, {
@@ -307,375 +339,429 @@ module.exports = async (req, res) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: chatId, message_id: messageId })
                 });
-            } catch (error) {}
+            } catch (e) {}
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // Handle action buttons
+
+        // ============ REPLY TIPS ============
         if (data.startsWith('reply_')) {
-            await sendMessage(chatId, `💡 <b>Tips Owner:</b>\nKamu tidak perlu menekan tombol ini. Cukup <b>Swipe / Reply (Balas)</b> langsung pada chat forward dari user ini, ketik pesan, lalu kirim. Sistem akan meneruskannya otomatis!`, null, botToken);
+            await sendMsg(chatId,
+                '💡 <b>Tips:</b> Reply/Swipe langsung pada pesan user untuk membalas. Tidak perlu tekan tombol ini.',
+                null, botToken
+            );
             return res.status(200).json({ status: 'OK' });
         }
-        
+
+        // ============ BLOCK USER BUTTON ============
         if (data.startsWith('limitblock_')) {
-            const blockUserId = data.replace('limitblock_', '');
+            const uid = data.replace('limitblock_', '');
             if (!settings.blockedUsers) settings.blockedUsers = {};
-            settings.blockedUsers[blockUserId] = { blockedAt: new Date().toISOString() };
+            settings.blockedUsers[uid] = { blockedAt: new Date().toISOString() };
             await saveDB(db);
-            await sendMessage(chatId, `✅ User ID <code>${blockUserId}</code> berhasil diblokir. Mereka tidak bisa mengirim pesan lagi.`, null, botToken);
+            await sendMsg(chatId, `✅ User <code>${uid}</code> diblokir!`, null, botToken);
             return res.status(200).json({ status: 'OK' });
         }
-        
+
         return res.status(200).json({ status: 'OK' });
     }
-    
-    // ==================== HANDLE MESSAGE ====================
+
+    // ==================== MESSAGE HANDLER ====================
     if (body.message) {
         const msg = body.message;
         const text = msg.text || '';
         const chatId = msg.chat.id;
-        const fromUser = msg.from;
-        const senderId = fromUser.id;
-        const senderUsername = fromUser.username || '';
-        const senderName = fromUser.first_name || 'Unknown';
-        
+        const userId = msg.from.id;
+        const username = msg.from.username || '';
+        const firstName = msg.from.first_name || 'Unknown';
+
         const db = await getDB();
         if (!db) return res.status(200).json({ status: 'OK' });
-        
-        let currentBot = null;
-        if (targetBotId && db.bots[targetBotId]) {
-            currentBot = db.bots[targetBotId];
-            currentBot.botId = targetBotId;
-        }
-        
-        if (!currentBot) return res.status(200).json({ status: 'OK' });
-        
-        // Setup startTime init
-        if (!currentBot.startTime) {
-            currentBot.startTime = Date.now();
-            await saveDB(db);
-        }
 
-        const bot = currentBot;
+        // Cari bot
+        let bot = null;
+        if (targetBotId && db.bots[targetBotId]) {
+            bot = db.bots[targetBotId];
+            bot.botId = targetBotId;
+        }
+        if (!bot) return res.status(200).json({ status: 'OK' });
+
         const botToken = bot.token;
         const ownerId = bot.ownerId;
         const settings = bot.settings || {};
-        const isOwner = (senderId === ownerId);
+        const isOwner = (userId === ownerId);
 
-        // ==========================================
-        // 🚀 FITUR DIRECT REPLY VIA SWIPE 
-        // ==========================================
-        if (isOwner && msg.reply_to_message && msg.reply_to_message.text) {
-            const repliedText = msg.reply_to_message.text;
-            if (repliedText.includes('PESAN BARU') && repliedText.includes('🆔 ID:')) {
-                const idMatch = repliedText.match(/🆔 ID:\s*(\d+)/);
-                if (idMatch) {
-                    if (!text) {
-                        await sendMessage(chatId, '⚠️ Mohon balas dengan teks.', null, botToken);
-                        return res.status(200).json({ status: 'OK' });
-                    }
-                    
-                    const targetUserId = idMatch[1];
-                    try {
-                        const sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ chat_id: targetUserId, text: `📤 <b>Balasan Owner:</b>\n\n${text}`, parse_mode: 'HTML' })
+        // ============ 👍 REACTION SEMUA PESAN ============
+        await react(chatId, msg.message_id, '👍', botToken);
+
+        // ============ OWNER DIRECT REPLY ============
+        if (isOwner && msg.reply_to_message && msg.reply_to_message.text && text) {
+            const idMatch = msg.reply_to_message.text.match(/🆔\s*(\d+)/);
+            if (idMatch) {
+                const targetId = idMatch[1];
+                try {
+                    const r = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            chat_id: targetId,
+                            text: `📤 <b>Balasan Owner:</b>\n\n${text}`,
+                            parse_mode: 'HTML'
+                        })
+                    });
+                    const rd = await r.json();
+                    if (rd.ok) {
+                        // 🗿 Reaction untuk balasan sukses
+                        await react(chatId, msg.message_id, '🗿', botToken);
+
+                        // Update stats
+                        if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
+                        bot.stats.totalMessages++;
+                        bot.stats.totalOutgoing++;
+                        bot.stats.todayMessages++;
+
+                        if (!bot.chatLog) bot.chatLog = [];
+                        bot.chatLog.push({
+                            direction: 'out',
+                            from: 'Owner',
+                            userId: targetId,
+                            text: text,
+                            timestamp: new Date().toISOString()
                         });
-                        const sendData = await sendRes.json();
-                        
-                        if (sendData.ok) {
-                            await fetch(`https://api.telegram.org/bot${botToken}/setMessageReaction`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ chat_id: chatId, message_id: msg.message_id, reaction: [{ type: 'emoji', emoji: '🗿' }] })
-                            });
-                            
-                            if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
-                            bot.stats.totalMessages++;
-                            bot.stats.totalOutgoing++;
-                            
-                            if (!bot.chatLog) bot.chatLog = [];
-                            bot.chatLog.push({ direction: 'out', from: 'Owner', userId: targetUserId, text: text, timestamp: new Date().toISOString() });
-                            await saveDB(db);
-                        } else {
-                            await sendMessage(chatId, `❌ Gagal membalas: ${sendData.description}`, null, botToken);
-                        }
-                    } catch (error) {}
-                    return res.status(200).json({ status: 'OK' });
-                }
-            }
-        }
-        
-        // ==========================================
-        // 👑 COMMANDS KHUSUS OWNER
-        // ==========================================
-        if (isOwner && text.startsWith('/')) {
-            const args = text.split(' ');
-            const command = args[0].toLowerCase();
-            
-            // 1. HELP COMMAND
-            if (command === '/help') {
-                const helpMsg = `🛠️ <b>COMMAND CENTER (KHUSUS OWNER)</b>\n\n` +
-                    `Berikut adalah perintah yang bisa Anda gunakan untuk mengelola Bot Limit Anda:\n\n` +
-                    `🎛️ <b>General:</b>\n` +
-                    `• /panel - Buka Dashboard UI\n` +
-                    `• /stats - Lihat statistik bot & uptime\n\n` +
-                    `💬 <b>Interaksi:</b>\n` +
-                    `• /reply <code>[ID_USER] [PESAN]</code> - Balas chat user manual via ID\n` +
-                    `• /broadcast <code>[PESAN]</code> - Kirim pesan masal ke semua user bot Anda\n\n` +
-                    `⚙️ <b>Pengaturan:</b>\n` +
-                    `• /setautoreply <code>[PESAN]</code> - Ubah teks balasan otomatis\n` +
-                    `• /addblacklist <code>[KATA]</code> - Tambah sensor kata\n` +
-                    `• /removeblacklist <code>[KATA]</code> - Hapus sensor kata\n\n` +
-                    `🛡️ <b>Keamanan:</b>\n` +
-                    `• /block <code>[ID_USER]</code> - Blokir pengguna\n` +
-                    `• /unblock <code>[ID_USER]</code> - Buka blokir pengguna\n\n` +
-                    `<i>💡 Tips: Anda juga bisa membalas chat user dengan cara me-reply (swipe) langsung pesan mereka yang diforward ke Anda.</i>`;
-                
-                await sendMessage(chatId, helpMsg, null, botToken);
+                        await saveDB(db);
+                    } else {
+                        await sendMsg(chatId, `❌ Gagal: ${rd.description}`, null, botToken);
+                    }
+                } catch (e) {}
                 return res.status(200).json({ status: 'OK' });
             }
+        }
 
-            // 2. PANEL COMMAND
-            if (command === '/panel') {
-                const uptimeStr = formatUptime(Date.now() - bot.startTime);
-                const keyboard = {
-                    inline_keyboard: [
-                        [{ text: '🎛️ Buka Control Panel', callback_data: `limit_panel_${bot.botId}` }],
-                        [{ text: '🔙 Kelola Bot di Main Bot', url: `https://t.me/${MAIN_BOT_USERNAME}` }]
-                    ]
-                };
-                
-                await sendMessage(chatId,
-                    `🎛️ <b>PANEL AKSES CEPAT</b>\n\n` +
+        // ============ /start ============
+        if (text === '/start') {
+            if (isOwner) {
+                // TAMPILAN OWNER
+                const ownerUsername = db.users?.[ownerId]?.username || username || 'Owner';
+                await sendMsg(chatId,
+                    `🤖 <b>BOT LIMIT KAMU</b>\n\n` +
+                    `👑 Owner: @${ownerUsername}\n` +
                     `🤖 Bot: @${bot.botUsername}\n` +
-                    `⏱️ Uptime: ${uptimeStr}\n` +
-                    `👥 Total User: ${Object.keys(bot.stats?.uniqueUsers || {}).length}`,
-                    keyboard,
+                    `⏳ Uptime: ${getUptime()}\n` +
+                    `👥 User: ${Object.keys(bot.stats?.uniqueUsers || {}).length}\n` +
+                    `📨 Pesan: ${bot.stats?.totalMessages || 0}\n\n` +
+                    `📋 <b>FULL COMMAND LIST:</b>\n` +
+                    `/panel — Control panel bot\n` +
+                    `/start — Menu ini\n` +
+                    `/reply ID PESAN — Balas user via ID\n` +
+                    `/addblacklist KATA — Filter kata kasar\n` +
+                    `/removeblacklist KATA — Hapus filter\n` +
+                    `/block USER_ID — Blokir user\n` +
+                    `/unblock USER_ID — Buka blokir\n` +
+                    `/setwelcome PESAN — Edit welcome message\n` +
+                    `/setautoreply PESAN — Set auto reply\n` +
+                    `/addbutton TEKS|URL — Tambah tombol\n` +
+                    `/clearbuttons — Hapus semua tombol\n` +
+                    `/ophours on/off/JAM — Atur jam operasional\n\n` +
+                    `💡 <b>Tips:</b> Reply langsung pesan user untuk membalas!`,
+                    {
+                        inline_keyboard: [
+                            [{ text: '🎛️ Control Panel', callback_data: `limit_panel_${bot.botId}` }],
+                            [{ text: '📊 Statistik', callback_data: `limit_stats_${bot.botId}` }],
+                            [{ text: '🔙 Ke Bot Utama', url: `https://t.me/${MAIN_BOT_USERNAME}` }]
+                        ]
+                    },
                     botToken
                 );
-                return res.status(200).json({ status: 'OK' });
-            }
+            } else {
+                // TAMPILAN USER BIASA
+                const ownerUser = db.users?.[ownerId];
+                const ownerUsername = ownerUser?.username || 'pemilik';
+                const ownerName = ownerUser?.firstName || 'Pemilik Bot';
 
-            // 3. STATS COMMAND
-            if (command === '/stats') {
-                const uptimeStr = formatUptime(Date.now() - bot.startTime);
-                await sendMessage(chatId, `📊 <b>Statistik Cepat</b>\n\n⏱️ Uptime: ${uptimeStr}\n📨 Total Chat: ${bot.stats?.totalMessages || 0}\n👥 User: ${Object.keys(bot.stats?.uniqueUsers || {}).length}`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
+                let welcome = settings.welcomeMessage ||
+                    `🤖 <b>Bot ini dibuat oleh @xnecz</b>\n\n` +
+                    `📩 Kirim pesan untuk <a href="tg://user?id=${ownerId}">${ownerName}</a> (@${ownerUsername})\n` +
+                    `🔗 Buat bot limit sendiri di bawah`;
 
-            // 4. REPLY COMMAND
-            if (command === '/reply') {
-                const targetUserId = args[1];
-                const replyText = args.slice(2).join(' ');
-                if (!targetUserId || !replyText) {
-                    await sendMessage(chatId, '❌ Format salah!\nContoh: <code>/reply 12345678 Halo apa kabar?</code>', null, botToken);
-                    return res.status(200).json({ status: 'OK' });
-                }
-                
-                await sendMessage(targetUserId, `📤 <b>Balasan Owner:</b>\n\n${replyText}`, null, botToken);
-                await sendMessage(chatId, `✅ Pesan terkirim ke <code>${targetUserId}</code>`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
+                welcome = welcome
+                    .replace('{name}', firstName)
+                    .replace('{username}', username || firstName)
+                    .replace('{botname}', bot.botName || '')
+                    .replace('{owner}', `@${ownerUsername}`)
+                    .replace('{ownerid}', ownerId);
 
-            // 5. BROADCAST COMMAND
-            if (command === '/broadcast') {
-                const broadcastText = args.slice(1).join(' ');
-                if (!broadcastText) {
-                    await sendMessage(chatId, '❌ Format salah!\nContoh: <code>/broadcast Halo semua, bot sedang maintenance!</code>', null, botToken);
-                    return res.status(200).json({ status: 'OK' });
-                }
-
-                const users = Object.keys(bot.stats?.uniqueUsers || {});
-                if (users.length === 0) {
-                    await sendMessage(chatId, '⚠️ Belum ada user yang bisa di-broadcast.', null, botToken);
-                    return res.status(200).json({ status: 'OK' });
-                }
-
-                await sendMessage(chatId, `⏳ Memulai broadcast ke ${users.length} pengguna...`, null, botToken);
-                
-                let success = 0;
-                for (const uid of users) {
-                    const sent = await sendMessage(uid, `📢 <b>BROADCAST DARI OWNER</b>\n\n${broadcastText}`, null, botToken);
-                    if (sent) success++;
-                }
-
-                await sendMessage(chatId, `✅ <b>Broadcast Selesai!</b>\nBerhasil terkirim ke ${success} dari ${users.length} pengguna.`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-
-            // 6. SETTINGS COMMANDS (AutoReply, Blacklist, Block)
-            if (command === '/setautoreply') {
-                bot.settings.autoReplyText = args.slice(1).join(' ');
-                await saveDB(db);
-                await sendMessage(chatId, `✅ Auto Reply diubah menjadi:\n<i>"${bot.settings.autoReplyText}"</i>`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-
-            if (command === '/addblacklist') {
-                if (!args[1]) return res.status(200).json({ status: 'OK' });
-                if (!bot.settings.blacklistWords) bot.settings.blacklistWords = [];
-                bot.settings.blacklistWords.push(args[1].toLowerCase());
-                await saveDB(db);
-                await sendMessage(chatId, `✅ Kata <b>${args[1]}</b> ditambahkan ke blacklist.`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-
-            if (command === '/removeblacklist') {
-                if (!args[1] || !bot.settings.blacklistWords) return res.status(200).json({ status: 'OK' });
-                bot.settings.blacklistWords = bot.settings.blacklistWords.filter(w => w !== args[1].toLowerCase());
-                await saveDB(db);
-                await sendMessage(chatId, `✅ Kata <b>${args[1]}</b> dihapus dari blacklist.`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-
-            if (command === '/block') {
-                if (!args[1]) return res.status(200).json({ status: 'OK' });
-                if (!bot.settings.blockedUsers) bot.settings.blockedUsers = {};
-                bot.settings.blockedUsers[args[1]] = { blockedAt: new Date().toISOString() };
-                await saveDB(db);
-                await sendMessage(chatId, `✅ User <code>${args[1]}</code> diblokir.`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-
-            if (command === '/unblock') {
-                if (!args[1] || !bot.settings.blockedUsers) return res.status(200).json({ status: 'OK' });
-                delete bot.settings.blockedUsers[args[1]];
-                await saveDB(db);
-                await sendMessage(chatId, `✅ Blokir untuk User <code>${args[1]}</code> dibuka.`, null, botToken);
-                return res.status(200).json({ status: 'OK' });
-            }
-        }
-        
-        // ==========================================
-        // 👤 HANDLE USER COMMANDS (/start)
-        // ==========================================
-        if (text === '/start') {
-            let welcomeMsg = settings.welcomeMessage || 
-                `🤖 <b>Halo! Ini adalah Bot Asisten Pribadi.</b>\n\n` +
-                `📩 Silahkan kirim pesan Anda, dan akan langsung diteruskan ke pemilik bot.\n\n` +
-                `🔗 <i>Powered by Limit Bot Engine</i>`;
-            
-            welcomeMsg = welcomeMsg
-                .replace('{name}', senderName)
-                .replace('{username}', senderUsername || senderName)
-                .replace('{botname}', bot.botName || '');
-            
-            const buttons = [];
-            const customButtons = settings.customButtons || [];
-            if (customButtons.length > 0) {
-                const row = [];
+                const buttons = [];
+                const customButtons = settings.customButtons || [];
                 for (const btn of customButtons) {
-                    row.push({ text: btn.text, url: btn.url });
-                    if (row.length === 2) {
-                        buttons.push([...row]);
-                        row.length = 0;
-                    }
+                    buttons.push([{ text: btn.text, url: btn.url }]);
                 }
-                if (row.length > 0) buttons.push(row);
-            }
-            buttons.push([{ text: '🔗 Buat Bot Limit Sendiri', url: `https://t.me/${MAIN_BOT_USERNAME}` }]);
-            
-            await sendMessage(chatId, welcomeMsg, { inline_keyboard: buttons }, botToken);
-            
-            // Registrasi User Baru di Statistik & Notif Owner
-            if (!isOwner) {
+                buttons.push([{ text: '🔗 Buat Bot Limit Sendiri', url: MAIN_BOT_URL }]);
+
+                await sendMsg(chatId, welcome,
+                    buttons.length > 0 ? { inline_keyboard: buttons } : null,
+                    botToken
+                );
+
+                // Update stats
                 if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
                 if (!bot.stats.uniqueUsers) bot.stats.uniqueUsers = {};
-                
-                if (!bot.stats.uniqueUsers[senderId]) {
-                    bot.stats.uniqueUsers[senderId] = {
-                        username: senderUsername,
-                        firstName: senderName,
-                        firstSeen: new Date().toISOString(),
-                        lastSeen: new Date().toISOString(),
-                        messageCount: 0
-                    };
-                    await saveDB(db);
-                    
-                    if (settings.notifyOwner) {
-                        try {
-                            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    chat_id: ownerId,
-                                    text: `🔔 <b>USER BARU MENGAKSES BOT</b>\n\n` +
-                                        `👤 Akun: <a href="tg://user?id=${senderId}">${senderName}</a>\n` +
-                                        `🆔 ID: <code>${senderId}</code>\n` +
-                                        `🔗 Username: @${senderUsername || '-'}`,
-                                    parse_mode: 'HTML'
-                                })
-                            });
-                        } catch (error) {}
-                    }
+                bot.stats.uniqueUsers[userId] = {
+                    username, firstName,
+                    firstSeen: new Date().toISOString(),
+                    lastSeen: new Date().toISOString(),
+                    messageCount: 0
+                };
+                await saveDB(db);
+
+                // Notifikasi ke owner
+                if (settings.notifyOwner) {
+                    try {
+                        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                chat_id: ownerId,
+                                text: `🔔 <b>User Baru!</b>\n\n📩 Dari: @${username || 'Tanpa'}\n📝 Nama: ${firstName}\n🆔 ${userId}`,
+                                parse_mode: 'HTML'
+                            })
+                        });
+                    } catch (e) {}
                 }
             }
             return res.status(200).json({ status: 'OK' });
         }
-        
-        // ==========================================
-        // 📨 FORWARD PESAN DARI USER KE OWNER
-        // ==========================================
-        if (!isOwner && text && !text.startsWith('/')) {
-            if (settings.isPaused) return res.status(200).json({ status: 'OK' });
-            if (settings.blockedUsers && settings.blockedUsers[senderId]) return res.status(200).json({ status: 'OK' });
-            
-            if (containsBlacklistWord(text, settings.blacklistWords)) {
-                await sendMessage(chatId, '⚠️ Pesan kamu ditolak karena mengandung kata yang dilarang (Blacklist).', null, botToken);
+
+        // ============ /panel (owner) ============
+        if (text === '/panel' && isOwner) {
+            await sendMsg(chatId,
+                `🎛️ <b>PANEL BOT</b>\n\n` +
+                `🤖 @${bot.botUsername}\n` +
+                `📨 Pesan: ${bot.stats?.totalMessages || 0}\n` +
+                `👥 User: ${Object.keys(bot.stats?.uniqueUsers || {}).length}\n` +
+                `⏳ Uptime: ${getUptime()}`,
+                { inline_keyboard: [[{ text: '🎛️ Buka Control Panel', callback_data: `limit_panel_${bot.botId}` }]] },
+                botToken
+            );
+            return res.status(200).json({ status: 'OK' });
+        }
+
+        // ============ OWNER COMMANDS ============
+        if (isOwner) {
+            // /reply
+            if (text.startsWith('/reply')) {
+                const parts = text.replace('/reply', '').trim().split(' ');
+                const targetId = parts[0];
+                const replyText = parts.slice(1).join(' ');
+                if (targetId && replyText) {
+                    await sendMsg(targetId, `📤 <b>Balasan Owner:</b>\n\n${replyText}`, null, botToken);
+                    await sendMsg(chatId, '✅ Terkirim!', null, botToken);
+                    if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
+                    bot.stats.totalMessages++;
+                    bot.stats.totalOutgoing++;
+                    bot.stats.todayMessages++;
+                    if (!bot.chatLog) bot.chatLog = [];
+                    bot.chatLog.push({ direction: 'out', from: 'Owner', userId: targetId, text: replyText, timestamp: new Date().toISOString() });
+                    await saveDB(db);
+                } else {
+                    await sendMsg(chatId, '❌ Format: /reply ID PESAN\nContoh: /reply 123456 Halo!', null, botToken);
+                }
                 return res.status(200).json({ status: 'OK' });
             }
-            
-            // Catat Statistik
+
+            // /addblacklist
+            if (text.startsWith('/addblacklist')) {
+                const word = text.replace('/addblacklist', '').trim();
+                if (word) {
+                    if (!settings.blacklistWords) settings.blacklistWords = [];
+                    settings.blacklistWords.push(word.toLowerCase());
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ "${word}" ditambahkan ke blacklist!`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /removeblacklist
+            if (text.startsWith('/removeblacklist')) {
+                const word = text.replace('/removeblacklist', '').trim().toLowerCase();
+                if (word && settings.blacklistWords) {
+                    settings.blacklistWords = settings.blacklistWords.filter(w => w !== word);
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ "${word}" dihapus dari blacklist!`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /block
+            if (text.startsWith('/block')) {
+                const id = text.replace('/block', '').trim();
+                if (id) {
+                    if (!settings.blockedUsers) settings.blockedUsers = {};
+                    settings.blockedUsers[id] = { blockedAt: new Date().toISOString() };
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ User ${id} diblokir!`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /unblock
+            if (text.startsWith('/unblock')) {
+                const id = text.replace('/unblock', '').trim();
+                if (id && settings.blockedUsers) {
+                    delete settings.blockedUsers[id];
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ User ${id} diunblock!`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /setwelcome
+            if (text.startsWith('/setwelcome')) {
+                const welcome = text.replace('/setwelcome', '').trim();
+                if (welcome) {
+                    settings.welcomeMessage = welcome;
+                    await saveDB(db);
+                    await sendMsg(chatId, '✅ Welcome message diupdate!', null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /setautoreply
+            if (text.startsWith('/setautoreply')) {
+                const reply = text.replace('/setautoreply', '').trim();
+                if (reply) {
+                    settings.autoReplyText = reply;
+                    settings.autoReply = true;
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ Auto reply diupdate: "${reply}"`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /addbutton
+            if (text.startsWith('/addbutton')) {
+                const parts = text.replace('/addbutton', '').trim().split('|');
+                const btnText = parts[0]?.trim();
+                const btnUrl = parts[1]?.trim();
+                if (btnText && btnUrl) {
+                    if (!settings.customButtons) settings.customButtons = [];
+                    if (settings.customButtons.length >= 3) {
+                        await sendMsg(chatId, '❌ Maksimal 3 button!', null, botToken);
+                    } else {
+                        settings.customButtons.push({ text: btnText, url: btnUrl });
+                        await saveDB(db);
+                        await sendMsg(chatId, `✅ Button "${btnText}" ditambahkan!`, null, botToken);
+                    }
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /clearbuttons
+            if (text.startsWith('/clearbuttons')) {
+                settings.customButtons = [];
+                await saveDB(db);
+                await sendMsg(chatId, '✅ Semua button dihapus!', null, botToken);
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // /ophours
+            if (text.startsWith('/ophours')) {
+                const parts = text.replace('/ophours', '').trim().split(' ');
+                const arg = parts[0];
+                if (arg === 'on') {
+                    settings.operatingHours = { enabled: true, start: settings.operatingHours?.start || '00:00', end: settings.operatingHours?.end || '23:59' };
+                    await saveDB(db);
+                    await sendMsg(chatId, '✅ Jam operasional AKTIF!', null, botToken);
+                } else if (arg === 'off') {
+                    if (!settings.operatingHours) settings.operatingHours = {};
+                    settings.operatingHours.enabled = false;
+                    await saveDB(db);
+                    await sendMsg(chatId, '❌ Jam operasional MATI!', null, botToken);
+                } else if (arg && arg.includes('-')) {
+                    const [start, end] = arg.split('-');
+                    settings.operatingHours = { enabled: true, start, end };
+                    await saveDB(db);
+                    await sendMsg(chatId, `✅ Jam operasional: ${start}-${end}`, null, botToken);
+                }
+                return res.status(200).json({ status: 'OK' });
+            }
+        }
+
+        // ============ PESAN DARI USER BIASA ============
+        if (!isOwner && text && !text.startsWith('/')) {
+            // Cek pause
+            if (settings.isPaused) return res.status(200).json({ status: 'OK' });
+
+            // Cek blokir
+            if (settings.blockedUsers?.[userId]) return res.status(200).json({ status: 'OK' });
+
+            // Cek blacklist
+            if (hasBlacklist(text, settings.blacklistWords)) {
+                await sendMsg(chatId, '⚠️ Pesan kamu mengandung kata yang diblokir.', null, botToken);
+                return res.status(200).json({ status: 'OK' });
+            }
+
+            // Init stats
             if (!bot.stats) bot.stats = { totalMessages: 0, totalIncoming: 0, totalOutgoing: 0, uniqueUsers: {}, todayMessages: 0 };
+            if (!bot.stats.uniqueUsers) bot.stats.uniqueUsers = {};
             if (!bot.chatLog) bot.chatLog = [];
+
+            // Update stats
             bot.stats.totalMessages++;
             bot.stats.totalIncoming++;
-            bot.stats.todayMessages = (bot.stats.todayMessages || 0) + 1;
-            
-            if (bot.stats.uniqueUsers[senderId]) {
-                bot.stats.uniqueUsers[senderId].lastSeen = new Date().toISOString();
-                bot.stats.uniqueUsers[senderId].messageCount = (bot.stats.uniqueUsers[senderId].messageCount || 0) + 1;
+            bot.stats.todayMessages++;
+
+            if (bot.stats.uniqueUsers[userId]) {
+                bot.stats.uniqueUsers[userId].lastSeen = new Date().toISOString();
+                bot.stats.uniqueUsers[userId].messageCount++;
             } else {
-                bot.stats.uniqueUsers[senderId] = { username: senderUsername, firstName: senderName, firstSeen: new Date().toISOString(), lastSeen: new Date().toISOString(), messageCount: 1 };
-            }
-            
-            bot.chatLog.push({ direction: 'in', from: senderUsername || senderName, userId: senderId, text: text, timestamp: new Date().toISOString() });
-            if (bot.chatLog.length > 50) bot.chatLog = bot.chatLog.slice(-50);
-            await saveDB(db);
-            
-            // Kirim ke Owner
-            if (settings.forwardToOwner !== false) {
-                const forwardKeyboard = {
-                    inline_keyboard: [
-                        [{ text: '💬 Balas (Tips)', callback_data: `reply_${senderId}_${bot.botId}` }, { text: '🚫 Blokir User', callback_data: `limitblock_${senderId}` }]
-                    ]
+                bot.stats.uniqueUsers[userId] = {
+                    username, firstName,
+                    firstSeen: new Date().toISOString(),
+                    lastSeen: new Date().toISOString(),
+                    messageCount: 1
                 };
-                
-                let forwardText = `📩 <b>PESAN BARU MASUK</b>\n\n`;
-                forwardText += `👤 Dari: <a href="tg://user?id=${senderId}">${senderName}</a>\n`;
-                forwardText += `🆔 ID: <code>${senderId}</code>\n`;
-                if (senderUsername) forwardText += `🔗 Username: @${senderUsername}\n`;
-                forwardText += `\n💬 <b>Pesan:</b>\n<i>${text}</i>`;
-                
+            }
+
+            // Chat log
+            bot.chatLog.push({
+                direction: 'in',
+                from: username || firstName,
+                userId,
+                text,
+                timestamp: new Date().toISOString()
+            });
+            if (bot.chatLog.length > 50) bot.chatLog = bot.chatLog.slice(-50);
+
+            await saveDB(db);
+
+            // Forward pesan ke owner (SIMPLE)
+            if (settings.forwardToOwner !== false) {
                 try {
                     await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chat_id: ownerId, text: forwardText, parse_mode: 'HTML', reply_markup: forwardKeyboard })
+                        body: JSON.stringify({
+                            chat_id: ownerId,
+                            text: `📩 <b>Pesan dari</b> @${username || 'Tanpa'}:\n\n${text}\n\n🆔 ${userId}`,
+                            parse_mode: 'HTML',
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '💬 Balas', callback_data: `reply_${userId}` },
+                                    { text: '🚫 Blokir', callback_data: `limitblock_${userId}` }
+                                ]]
+                            }
+                        })
                     });
-                } catch (error) {}
+                } catch (e) {}
             }
-            
-            // Auto Reply
+
+            // Auto reply
             if (settings.autoReply) {
-                await sendMessage(chatId, settings.autoReplyText || 'Pesan Anda telah diterima. Mohon tunggu balasan dari owner.', null, botToken);
+                await sendMsg(chatId, settings.autoReplyText || 'Maaf, owner sedang offline.', null, botToken);
             }
-            
+
             return res.status(200).json({ status: 'OK' });
         }
     }
-    
+
     res.status(200).json({ status: 'OK' });
 };
